@@ -80,3 +80,66 @@ config MQTT_CONNECT_TIMEOUT_MS
 	  How long telemetry_connect() waits for CONNACK before giving up and
 	  returning -ETIMEDOUT. Connection is non-fatal: the application keeps
 	  sampling/logging and retries on the next cycle.
+
+# --- Phase 3: OTA ---
+
+config OTA_CMD_TOPIC_FMT
+	string "OTA command topic format (printf-style, one %s = device_id)"
+	default "devices/%s/cmd"
+	help
+	  printf-style topic the OTA subscriber listens on for firmware update
+	  commands. The single %s is replaced with CONFIG_DEVICE_ID, yielding
+	  e.g. devices/native-sim-001/cmd.
+
+config OTA_MAX_IMAGE_SIZE
+	int "Maximum OTA firmware image size (bytes)"
+	default 262144
+	range 4096 1048576
+	help
+	  Maximum size of a firmware image accepted via OTA. Images larger than
+	  this are rejected before any flash writes begin.
+
+config OTA_CHUNK_SIZE
+	int "OTA flash write chunk size (bytes)"
+	default 512
+	range 64 4096
+	help
+	  Size of each chunk written to the flash simulator during OTA image
+	  reception. Must be a multiple of the flash write block size.
+
+# --- Phase 3: Fault injection ---
+
+config FAULT_INJECT
+	bool "Fault injection framework"
+	default n
+	help
+	  Enable the fault injection framework. Individual fault modes are
+	  gated by their own Kconfig symbols below. When disabled, all
+	  fault_inject_*() calls compile to no-ops.
+
+config FAULT_INJECT_SENSOR_FAIL
+	bool "Inject sensor read failures"
+	default n
+	depends on FAULT_INJECT
+	help
+	  When enabled, sensor_sample_fetch() calls in the application return
+	  -EIO to simulate a sensor hardware failure. Used by the fault
+	  injection ztest suite.
+
+config FAULT_INJECT_FLASH_CORRUPT
+	bool "Inject flash corruption"
+	default n
+	depends on FAULT_INJECT
+	help
+	  When enabled, flash writes during OTA are silently corrupted (bytes
+	  inverted) to simulate flash media degradation. Used by the fault
+	  injection ztest suite.
+
+config FAULT_INJECT_DROP_PACKETS
+	bool "Inject MQTT packet drops"
+	default n
+	depends on FAULT_INJECT
+	help
+	  When enabled, MQTT publish calls are silently dropped (return 0
+	  without sending) to simulate network packet loss. Used by the fault
+	  injection ztest suite.

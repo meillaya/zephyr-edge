@@ -19,6 +19,8 @@ target_sources(app PRIVATE
   src/power_sched.c
   src/telemetry/telemetry.c
   src/telemetry/telemetry_cbor.c
+  src/ota/ota_update.c
+  src/fault_inject.c
 )
 
-target_include_directories(app PRIVATE src src/telemetry)
+target_include_directories(app PRIVATE src src/telemetry src/ota)

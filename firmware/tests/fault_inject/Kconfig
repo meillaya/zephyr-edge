@@ -1,0 +1,7 @@
+# Kconfig — Fault injection ztest suite.
+# Sources the shared application symbols so the suite shares one definition.
+
+mainmenu "fault injection ztest"
+
+source "Kconfig.zephyr"
+source "$(APPLICATION_SOURCE_DIR)/../../Kconfig.appdefs"

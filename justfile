@@ -46,7 +46,7 @@ run: build
 test: init
     #!/usr/bin/env bash
     set -euo pipefail
-    suites=(bme280 sensor_log power_sched telemetry)
+    suites=(bme280 sensor_log power_sched telemetry ota fault_inject)
     for suite in "${suites[@]}"; do
         echo ">> ztest: ${suite}"
         west build -b {{board}} -p auto -d "build/test-${suite}" "firmware/tests/${suite}"
@@ -58,6 +58,12 @@ test: init
 test-one suite: init
     west build -b {{board}} -p auto -d "build/test-{{suite}}" "firmware/tests/{{suite}}"
     west build -d "build/test-{{suite}}" -t run
+
+# Run the power benchmark script (Phase 3).
+power-bench duration="10": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./tests/scripts/power_bench.sh --duration {{duration}} --binary ./build/zephyr/zephyr.exe --output power_report.md
 
 # Remove all build artifacts (keeps the west workspace).
 clean:

@@ -1,0 +1,50 @@
+/*
+ * native_sim.overlay — Flash simulator with MCUboot partitions for OTA testing.
+ *
+ * Defines a simulated flash device with the partition layout expected by
+ * MCUboot: slot0 (current image), slot1 (OTA staging area), and scratch.
+ * The OTA module writes to slot1_partition and marks it for swap.
+ */
+
+/ {
+	sim_flash: sim-flash@0 {
+		compatible = "zephyr,sim-flash";
+		reg = <0x0 0x100000>;  /* 1MB simulated flash */
+		status = "okay";
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* MCUboot bootloader area (64KB). */
+			partition0: partition@0 {
+				label = "mcuboot";
+				reg = <0x0 0x10000>;
+			};
+
+			/* Slot 0: current running image (448KB). */
+			partition1: partition@10000 {
+				label = "image-0";
+				reg = <0x10000 0x70000>;
+			};
+
+			/* Slot 1: OTA staging area (448KB). */
+			slot1_partition: partition@80000 {
+				label = "image-1";
+				reg = <0x80000 0x70000>;
+			};
+
+			/* Scratch area (64KB). */
+			partition3: partition@f0000 {
+				label = "image-scratch";
+				reg = <0xf0000 0x10000>;
+			};
+		};
+	};
+};
+
+/* Alias the flash simulator for the flash_map API. */
+/aliases {
+	sim-flash = &sim_flash;
+};
