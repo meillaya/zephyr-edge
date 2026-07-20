@@ -1,0 +1,188 @@
+// Command cloud-ingest subscribes to device telemetry on an MQTT broker,
+// decodes CBOR payloads per docs/DATA_MODEL.md, and exposes Prometheus
+// metrics plus a /health endpoint.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/zephyr-edge-platform/cloud/telemetry"
+)
+
+// ── Prometheus metrics ──────────────────────────────────────────────
+
+var (
+	msgTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "telemetry_messages_total",
+		Help: "Total telemetry messages received per device.",
+	}, []string{"device_id"})
+
+	decodeErrTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telemetry_decode_errors_total",
+		Help: "Total CBOR decode failures.",
+	})
+
+	unknownSchemaTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telemetry_unknown_schema_total",
+		Help: "Total messages with missing or unsupported schema_version.",
+	})
+
+	invalidTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telemetry_invalid_total",
+		Help: "Total messages missing required fields.",
+	})
+
+	outOfRangeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "telemetry_out_of_range_total",
+		Help: "Total out-of-range sensor values (still exported).",
+	}, []string{"device_id", "field"})
+
+	temperatureGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telemetry_temperature_celsius",
+		Help: "Latest temperature reading in °C.",
+	}, []string{"device_id"})
+
+	humidityGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telemetry_humidity_percent",
+		Help: "Latest relative humidity reading in %RH.",
+	}, []string{"device_id"})
+
+	pressureGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telemetry_pressure_kpa",
+		Help: "Latest barometric pressure reading in kPa.",
+	}, []string{"device_id"})
+
+	seqGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telemetry_seq",
+		Help: "Latest sequence number per device.",
+	}, []string{"device_id"})
+)
+
+func init() {
+	prometheus.MustRegister(
+		msgTotal, decodeErrTotal, unknownSchemaTotal, invalidTotal,
+		outOfRangeTotal, temperatureGauge, humidityGauge, pressureGauge, seqGauge,
+	)
+}
+
+// ── Configuration ───────────────────────────────────────────────────
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// ── Main ────────────────────────────────────────────────────────────
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	mqttBroker := envOr("MQTT_BROKER", "tcp://localhost:1883")
+	mqttTopic := envOr("MQTT_TOPIC", "telemetry/+")
+	httpAddr := envOr("HTTP_ADDR", ":9090")
+	clientID := envOr("CLIENT_ID", "cloud-ingest")
+
+	// ── MQTT subscriber ─────────────────────────────────────────────
+	opts := mqtt.NewClientOptions().
+		AddBroker(mqttBroker).
+		SetClientID(clientID).
+		SetAutoReconnect(true).
+		SetConnectRetry(true).
+		SetConnectRetryInterval(5 * time.Second).
+		SetOnConnectHandler(func(c mqtt.Client) {
+			slog.Info("mqtt connected, subscribing", "broker", mqttBroker, "topic", mqttTopic)
+			if tok := c.Subscribe(mqttTopic, 1, handleMessage); tok.WaitTimeout(10*time.Second) && tok.Error() != nil {
+				slog.Error("mqtt subscribe failed", "error", tok.Error())
+			}
+		}).
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			slog.Warn("mqtt connection lost", "error", err)
+		})
+
+	client := mqtt.NewClient(opts)
+	if tok := client.Connect(); tok.WaitTimeout(30*time.Second) && tok.Error() != nil {
+		slog.Error("mqtt connect failed", "error", tok.Error())
+		os.Exit(1)
+	}
+
+	// ── HTTP server (/metrics + /health) ────────────────────────────
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	srv := &http.Server{Addr: httpAddr, Handler: mux}
+	go func() {
+		slog.Info("http server listening", "addr", httpAddr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("http server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// ── Graceful shutdown ───────────────────────────────────────────
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	slog.Info("shutting down")
+	client.Disconnect(500)
+	srv.Close()
+}
+
+// handleMessage is the MQTT message callback. It decodes, validates, and
+// exports each telemetry payload.
+func handleMessage(_ mqtt.Client, msg mqtt.Message) {
+	res := telemetry.Decode(msg.Payload())
+
+	switch res.Validation {
+	case telemetry.DecodeError:
+		decodeErrTotal.Inc()
+		slog.Warn("cbor decode error", "topic", msg.Topic(), "error", res.Err)
+		return
+	case telemetry.UnknownSchema:
+		unknownSchemaTotal.Inc()
+		slog.Warn("unknown schema", "topic", msg.Topic(), "error", res.Err)
+		return
+	case telemetry.Invalid:
+		invalidTotal.Inc()
+		slog.Warn("invalid payload", "topic", msg.Topic(), "error", res.Err)
+		return
+	}
+
+	r := res.Reading
+	msgTotal.WithLabelValues(r.DeviceID).Inc()
+	temperatureGauge.WithLabelValues(r.DeviceID).Set(r.TemperatureC)
+	humidityGauge.WithLabelValues(r.DeviceID).Set(r.HumidityPct)
+	pressureGauge.WithLabelValues(r.DeviceID).Set(r.PressureKpa)
+	seqGauge.WithLabelValues(r.DeviceID).Set(float64(r.Seq))
+
+	// Rule 4: range violations are flagged but the reading is still exported.
+	for _, v := range res.RangeViolations {
+		outOfRangeTotal.WithLabelValues(r.DeviceID, v.Field).Inc()
+		slog.Warn("out-of-range value", "device_id", r.DeviceID, "field", v.Field, "value", v.Value)
+	}
+
+	slog.Debug("telemetry ingested",
+		"device_id", r.DeviceID, "seq", r.Seq,
+		"temp", fmt.Sprintf("%.2f", r.TemperatureC),
+		"hum", fmt.Sprintf("%.2f", r.HumidityPct),
+		"press", fmt.Sprintf("%.2f", r.PressureKpa),
+	)
+}
