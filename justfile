@@ -72,3 +72,89 @@ clean:
 # Full reset: build artifacts + vendored west modules (forces a clean re-fetch).
 distclean: clean
     rm -rf .west zephyr modules tools bootloader
+
+# ── Phase 4: e2e demo ─────────────────────────────────────────────────
+
+# Run the full end-to-end demo: infra stack + fleet simulator + live metrics.
+# Starts Mosquitto → cloud-ingest → Prometheus → Grafana, then launches the
+# Go fleet simulator with N synthetic devices publishing CBOR telemetry.
+# Ctrl-C stops the fleet sim; the infra stack is torn down on exit.
+demo devices="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    INFRA_DIR="$(pwd)/infra"
+    FLEET_SIM="$(pwd)/tests/fleet-sim"
+
+    cleanup() {
+        echo ""
+        echo ">> stopping fleet simulator..."
+        kill "$FLEET_PID" 2>/dev/null || true
+        wait "$FLEET_PID" 2>/dev/null || true
+        echo ">> tearing down infra stack..."
+        docker compose -f "${INFRA_DIR}/docker-compose.yml" down -v
+        echo ">> demo complete."
+    }
+    trap cleanup EXIT INT TERM
+
+    # 1. Start the observability stack.
+    echo ">> starting infra stack (mosquitto → cloud-ingest → prometheus → grafana)..."
+    docker compose -f "${INFRA_DIR}/docker-compose.yml" up -d --build
+
+    # 2. Wait for cloud-ingest to be healthy.
+    echo ">> waiting for cloud-ingest to be healthy..."
+    for i in $(seq 1 40); do
+        if curl -sf http://localhost:9090/health >/dev/null 2>&1; then
+            echo "   cloud-ingest: healthy"
+            break
+        fi
+        if [ "$i" -eq 40 ]; then
+            echo "ERROR: cloud-ingest did not become healthy" >&2
+            docker compose -f "${INFRA_DIR}/docker-compose.yml" logs cloud-ingest
+            exit 1
+        fi
+        sleep 2
+    done
+
+    # 3. Launch the fleet simulator.
+    echo ">> starting fleet simulator with {{devices}} devices..."
+    if [ ! -f "${FLEET_SIM}/main.go" ]; then
+        echo "ERROR: fleet simulator not found at ${FLEET_SIM}/main.go" >&2
+        echo "       Run 'just demo' after the fleet-sim has been created (Phase 4)." >&2
+        exit 1
+    fi
+    (cd "${FLEET_SIM}" && go run main.go -n {{devices}}) &
+    FLEET_PID=$!
+
+    # 4. Wait for telemetry to appear in Prometheus.
+    echo ">> waiting for telemetry metrics in Prometheus..."
+    for i in $(seq 1 30); do
+        count=$(curl -sf 'http://localhost:9091/api/v1/query?query=telemetry_messages_total' 2>/dev/null \
+            | jq '[.data.result[] | select(.metric.device_id != "")] | length' 2>/dev/null || echo "0")
+        if [ "$count" -gt 0 ] 2>/dev/null; then
+            echo "   telemetry flowing from ${count} device(s)"
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "WARNING: no telemetry metrics after 60s — check fleet-sim logs" >&2
+        fi
+        sleep 2
+    done
+
+    # 5. Print dashboard URLs.
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  Zephyr Edge Platform — E2E Demo Running                ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Grafana:      http://localhost:3000  (admin / admin)   ║"
+    echo "║  Prometheus:   http://localhost:9091                    ║"
+    echo "║  Cloud ingest: http://localhost:9090/metrics            ║"
+    echo "║  MQTT broker:  localhost:1883                           ║"
+    echo "║  Fleet sim:    {{devices}} devices, PID ${FLEET_PID}              ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Press Ctrl-C to stop the demo and tear down the stack. ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # 6. Wait for the fleet sim to exit (or Ctrl-C).
+    wait "$FLEET_PID"

@@ -1,0 +1,197 @@
+# ci.yml — continuous integration for the zephyr-edge-platform monorepo.
+#
+# Jobs:
+#   firmware-build   – build the Zephyr firmware for native_sim
+#   firmware-test    – run all ztest suites on native_sim
+#   cloud-test       – run Go unit tests for the cloud ingestion service
+#   docker-compose-test – build + health-check the local observability stack
+#
+# The firmware jobs share a west-workspace cache so `west update` (which
+# clones the full Zephyr tree + modules) runs only once per commit.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOARD: native_sim
+
+jobs:
+  # ── Firmware build ──────────────────────────────────────────────────
+  firmware-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gperf device-tree-compiler pkg-config libusb-1.0-0-dev
+          pipx install west
+          pip install pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
+
+      - name: Cache west workspace
+        id: cache-west
+        uses: actions/cache@v4
+        with:
+          path: |
+            zephyr
+            modules
+            tools
+            bootloader
+            .west
+          key: west-${{ hashFiles('firmware/west.yml') }}-${{ runner.os }}
+
+      - name: West init + update
+        if: steps.cache-west.outputs.cache-hit != 'true'
+        run: |
+          west init -l firmware
+          west update
+
+      - name: Build firmware
+        run: west build -b ${{ env.BOARD }} -p auto firmware
+
+      - name: Upload firmware binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: zephyr-exe
+          path: build/zephyr/zephyr.exe
+          retention-days: 7
+
+  # ── Firmware tests (ztest suites) ──────────────────────────────────
+  firmware-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: firmware-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gperf device-tree-compiler pkg-config libusb-1.0-0-dev
+          pipx install west
+          pip install pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
+
+      - name: Cache west workspace
+        id: cache-west
+        uses: actions/cache@v4
+        with:
+          path: |
+            zephyr
+            modules
+            tools
+            bootloader
+            .west
+          key: west-${{ hashFiles('firmware/west.yml') }}-${{ runner.os }}
+
+      - name: West init + update
+        if: steps.cache-west.outputs.cache-hit != 'true'
+        run: |
+          west init -l firmware
+          west update
+
+      - name: Run ztest suites
+        run: |
+          set -euo pipefail
+          suites=(bme280 sensor_log power_sched telemetry ota fault_inject)
+          for suite in "${suites[@]}"; do
+            echo "::group::ztest: ${suite}"
+            west build -b ${{ env.BOARD }} -p auto -d "build/test-${suite}" "firmware/tests/${suite}"
+            west build -d "build/test-${suite}" -t run
+            echo "::endgroup::"
+          done
+          echo ">> all ztest suites passed"
+
+  # ── Cloud service tests ────────────────────────────────────────────
+  cloud-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: cloud/go.sum
+
+      - name: Run Go tests
+        working-directory: cloud
+        run: go test -v -race -count=1 ./...
+
+      - name: Vet
+        working-directory: cloud
+        run: go vet ./...
+
+  # ── Docker Compose integration test ────────────────────────────────
+  docker-compose-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: cloud-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the stack
+        working-directory: infra
+        run: docker compose up -d --build
+
+      - name: Wait for all services to be healthy
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          services=(mosquitto cloud-ingest prometheus grafana)
+          timeout=120
+          elapsed=0
+          for svc in "${services[@]}"; do
+            echo ">> waiting for ${svc} to be healthy..."
+            while true; do
+              health=$(docker compose ps --format json "$svc" 2>/dev/null | jq -r '.Health // .State' | head -1)
+              if [ "$health" = "healthy" ]; then
+                echo "   ${svc}: healthy"
+                break
+              fi
+              sleep 3
+              elapsed=$((elapsed + 3))
+              if [ "$elapsed" -ge "$timeout" ]; then
+                echo "::error::${svc} did not become healthy within ${timeout}s"
+                docker compose logs "$svc"
+                exit 1
+              fi
+            done
+          done
+          echo ">> all services healthy"
+
+      - name: Smoke-test cloud-ingest /health
+        run: |
+          curl -sf http://localhost:9090/health | jq -e '.status == "ok"'
+
+      - name: Smoke-test Prometheus /-/healthy
+        run: |
+          curl -sf http://localhost:9091/-/healthy
+
+      - name: Smoke-test Grafana /api/health
+        run: |
+          curl -sf http://localhost:3000/api/health | jq -e '.database == "ok"'
+
+      - name: Verify MQTT broker is accepting connections
+        run: |
+          # Publish a test message and confirm the broker accepts it.
+          docker compose -f infra/docker-compose.yml exec -T mosquitto \
+            mosquitto_pub -t "telemetry/ci-test" -m "test" -q 1
+
+      - name: Tear down
+        if: always()
+        working-directory: infra
+        run: docker compose down -v
