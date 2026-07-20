@@ -1,0 +1,26 @@
+# Kconfig — BME280 custom driver module.
+#
+# Sourced automatically by the Zephyr build because this directory is
+# registered as a module (zephyr/module.yml -> kconfig: Kconfig).
+
+config BME280_CUSTOM
+	bool "Custom BME280 I2C sensor driver"
+	default y
+	depends on I2C
+	help
+	  Custom Bosch BME280 temperature/humidity/pressure sensor driver
+	  implemented against the Zephyr sensor subsystem API (sample_fetch /
+	  channel_get). Reads calibration + raw data over I2C and applies the
+	  Bosch datasheet compensation formulas. Enable the matching devicetree
+	  node (compatible "vendor,bme280-custom") to instantiate it.
+
+config BME280_CUSTOM_EMUL
+	bool "BME280 I2C emulator for native_sim"
+	default y if BME280_CUSTOM
+	depends on BME280_CUSTOM && I2C_EMUL
+	help
+	  Register-file emulator backing the BME280 devicetree node on the
+	  native simulator (CONFIG_I2C_EMUL). Presents a full BME280 register
+	  map (chip ID, calibration, control, and data registers) pre-loaded
+	  with values that compensate to known physical outputs, enabling
+	  driver + I2C-path unit tests without hardware.

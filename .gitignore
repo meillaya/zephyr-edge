@@ -1,0 +1,32 @@
+# devenv / direnv caches
+.devenv/
+.direnv/
+
+# west workspace: generated config + vendored modules cloned by `west update`.
+# Anchored to the repo root so the in-repo driver module at
+# firmware/drivers/zephyr/ (module.yml) is NOT ignored.
+/.west/
+/zephyr/
+/modules/
+/tools/
+/bootloader/
+
+# Zephyr / west build output (anywhere)
+build/
+**/build/
+twister-out/
+twister-out-*/
+
+# Nix build symlink outputs
+result
+result-*
+
+# Local editor / OS metadata
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Go build output (cloud/ + tests/ in later phases)
+bin/
+*.test

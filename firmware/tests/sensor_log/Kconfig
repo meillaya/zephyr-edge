@@ -1,0 +1,7 @@
+# Kconfig — sensor_log ztest suite.
+# Sources the shared application symbols (SENSOR_LOG_BUF_SIZE).
+
+mainmenu "sensor_log ztest"
+
+source "Kconfig.zephyr"
+source "$(APPLICATION_SOURCE_DIR)/../../Kconfig.appdefs"

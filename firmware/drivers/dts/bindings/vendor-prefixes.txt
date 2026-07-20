@@ -1,0 +1,2 @@
+# Custom devicetree vendor prefixes for the zephyr-edge-platform driver module.
+vendor	Generic vendor prefix for zephyr-edge-platform custom device compatibles

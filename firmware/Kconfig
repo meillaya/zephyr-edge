@@ -1,0 +1,11 @@
+# Kconfig — zephyr-edge-platform application (top-level).
+#
+# The custom BME280 driver's symbols (BME280_CUSTOM / BME280_CUSTOM_EMUL) live
+# in the driver module's Kconfig and are sourced automatically by the Zephyr
+# build via the module system. Application-level symbols are in Kconfig.appdefs,
+# which is also sourced by the ztest suites so they share one definition.
+
+mainmenu "Zephyr Edge Platform"
+
+source "Kconfig.zephyr"
+source "$(APPLICATION_SOURCE_DIR)/Kconfig.appdefs"

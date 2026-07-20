@@ -1,0 +1,7 @@
+# Kconfig — power_sched ztest suite.
+# Sources the shared application symbols (POWER_ACTIVE_MS / IDLE / SLEEP).
+
+mainmenu "power_sched ztest"
+
+source "Kconfig.zephyr"
+source "$(APPLICATION_SOURCE_DIR)/../../Kconfig.appdefs"

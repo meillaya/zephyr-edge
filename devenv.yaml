@@ -1,0 +1,21 @@
+# devenv.yaml — zephyr-edge-platform
+# Pinned inputs + deterministic shell for the Zephyr edge platform monorepo.
+# Mirrors the kernel-v4 workspace devenv conventions (devenv 2.x, rolling
+# nixpkgs, git-hooks input, bash shell, strict_ports disabled).
+
+inputs:
+  nixpkgs:
+    url: "github:cachix/devenv-nixpkgs/rolling"
+  git-hooks:
+    url: "github:cachix/git-hooks.nix"
+
+# Pin to a devenv 2.x line exposing the modules used in devenv.nix
+# (languages.python, git-hooks, packages, env).
+require_version: ">=2.1"
+
+# Bash so the justfile and west commands behave consistently across hosts/CI.
+shell: bash
+
+# Disabled: concurrent local tooling (docker-compose, multiple west builds)
+# may legitimately reuse ports; strict_ports would break `devenv shell`.
+strict_ports: false

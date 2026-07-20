@@ -1,0 +1,13 @@
+# CMakeLists.txt — sensor_log ztest suite (native_sim).
+
+cmake_minimum_required(VERSION 3.20.0)
+
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(test_sensor_log)
+
+# Build the unit under test from the application sources.
+target_sources(app PRIVATE
+  src/main.c
+  ../../src/sensor_log.c
+)
+target_include_directories(app PRIVATE ../../src)

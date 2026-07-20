@@ -1,0 +1,21 @@
+# west.yml — zephyr-edge-platform firmware workspace manifest
+#
+# `firmware/` is the west manifest repository. Initialize the workspace from
+# the monorepo root with:   west init -l firmware   (see ../justfile `init`)
+# `west update` then clones Zephyr (and its imported modules) as siblings of
+# firmware/. The custom BME280 driver is a local Zephyr module under
+# firmware/drivers/ and is registered via ZEPHYR_EXTRA_MODULES in CMakeLists.txt
+# (it is NOT a west project, so it needs no entry here).
+
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.1.0
+      # `import: true` pulls in Zephyr's own module list (HALs, crypto, etc.)
+      # required by the build system even for native_sim.
+      import: true

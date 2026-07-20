@@ -1,0 +1,11 @@
+/* BME280@0x76 on the native_sim I2C emulator bus (&i2c0) for the driver test. */
+
+&i2c0 {
+	status = "okay";
+
+	bme280@76 {
+		compatible = "vendor,bme280-custom";
+		reg = <0x76>;
+		status = "okay";
+	};
+};

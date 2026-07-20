@@ -1,0 +1,12 @@
+# Devicetree binding for the custom BME280 I2C sensor driver.
+description: |
+  Custom Bosch BME280 combined temperature / humidity / pressure sensor
+  accessed over I2C. The node's `reg` is the 7-bit I2C address (0x76 or 0x77).
+
+compatible: "vendor,bme280-custom"
+
+include: [sensor-device.yaml, i2c-device.yaml]
+
+properties:
+  reg:
+    required: true

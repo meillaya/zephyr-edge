@@ -1,0 +1,10 @@
+# module.yml — registers firmware/drivers as a Zephyr module.
+#
+# Referenced from the application via ZEPHYR_EXTRA_MODULES (see
+# firmware/CMakeLists.txt). `dts_root: .` makes Zephyr look for devicetree
+# bindings under drivers/dts/bindings/.
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .

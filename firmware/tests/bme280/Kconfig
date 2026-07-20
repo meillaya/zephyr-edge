@@ -1,0 +1,6 @@
+# Kconfig — bme280 ztest suite.
+# Driver symbols (BME280_CUSTOM*) come from the driver module automatically.
+
+mainmenu "BME280 ztest"
+
+source "Kconfig.zephyr"
