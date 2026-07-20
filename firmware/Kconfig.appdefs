@@ -65,12 +65,12 @@ config MQTT_BROKER_PORT
 
 config MQTT_TELEMETRY_TOPIC_FMT
 	string "Telemetry topic format (printf-style, one %s = device_id)"
-	default "devices/%s/telemetry"
+	default "telemetry/%s"
 	help
 	  printf-style topic the telemetry publisher publishes to. The single
 	  %s is replaced with CONFIG_DEVICE_ID, yielding e.g.
-	  devices/native-sim-001/telemetry. The cloud ingestion service
-	  subscribes to the matching wildcard (devices/+/telemetry).
+	  telemetry/native-sim-001. The cloud ingestion service
+	  subscribes to the matching wildcard (telemetry/+).
 
 config MQTT_CONNECT_TIMEOUT_MS
 	int "MQTT connect timeout (ms)"

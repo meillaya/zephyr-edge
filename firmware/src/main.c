@@ -11,7 +11,7 @@
  * samples the BME280 and pushes a timestamped reading into the ring buffer.
  * The main loop then drains the ring buffer and publishes each reading as a
  * CBOR-encoded MQTT telemetry message (docs/DATA_MODEL.md §1) to
- * devices/<device_id>/telemetry, then services the MQTT connection (keepalive
+ * telemetry/<device_id>, then services the MQTT connection (keepalive
  * + PUBACK handling) and logs power-state statistics.
  *
  * Telemetry is best-effort: if the broker is unreachable (e.g. native_sim

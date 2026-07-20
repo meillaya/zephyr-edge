@@ -2,7 +2,7 @@
  * telemetry.h — MQTT telemetry publisher (Zephyr MQTT client).
  *
  * Publishes CBOR-encoded telemetry (telemetry_cbor.c) to the broker topic
- * devices/<device_id>/telemetry (format configurable via
+ * telemetry/<device_id> (format configurable via
  * CONFIG_MQTT_TELEMETRY_TOPIC_FMT) using QoS 1 with retry. The broker address
  * comes from CONFIG_MQTT_BROKER_HOST / CONFIG_MQTT_BROKER_PORT.
  *

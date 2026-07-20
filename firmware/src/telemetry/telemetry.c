@@ -1,7 +1,7 @@
 /*
  * telemetry.c — MQTT telemetry publisher (Zephyr MQTT client).
  *
- * Publishes CBOR-encoded telemetry to devices/<device_id>/telemetry using the
+ * Publishes CBOR-encoded telemetry to telemetry/<device_id> using the
  * Zephyr MQTT library over a native POSIX socket (CONFIG_MQTT_LIB +
  * CONFIG_NET_SOCKETS + CONFIG_NET_NATIVE). Mirrors the connection/publish
  * pattern of zephyr/samples/net/mqtt_publisher.
@@ -118,7 +118,7 @@ int telemetry_init(void)
 	client_ctx.tx_buf = tx_buffer;
 	client_ctx.tx_buf_size = sizeof(tx_buffer);
 
-	/* Build the publish topic: devices/<device_id>/telemetry by default. */
+	/* Build the publish topic: telemetry/<device_id> by default. */
 	int n = snprintf(topic_buffer, sizeof(topic_buffer),
 			 CONFIG_MQTT_TELEMETRY_TOPIC_FMT, CONFIG_DEVICE_ID);
 
