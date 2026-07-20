@@ -17,6 +17,8 @@ target_sources(app PRIVATE
   src/main.c
   src/sensor_log.c
   src/power_sched.c
+  src/telemetry/telemetry.c
+  src/telemetry/telemetry_cbor.c
 )
 
-target_include_directories(app PRIVATE src)
+target_include_directories(app PRIVATE src src/telemetry)

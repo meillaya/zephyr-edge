@@ -42,3 +42,41 @@ config POWER_SLEEP_MS
 	help
 	  Duration of the suspend-to-idle sleep window each cycle. With the
 	  defaults the device is active 5s then sleeps 55s (10% duty cycle).
+
+config MQTT_BROKER_HOST
+	string "MQTT broker IPv4 address"
+	default "192.0.2.2"
+	help
+	  IPv4 address of the MQTT broker the telemetry publisher connects to.
+	  The default (192.0.2.2) is the standard Zephyr native host-bridge
+	  address used by net-setup.sh / the docker-compose e2e stack; override
+	  it for a different network topology. native_sim reaches the host
+	  broker through the TAP ethernet driver (CONFIG_ETH_NATIVE_POSIX), so
+	  live publication requires host-side bridge setup (see infra/README.md).
+
+config MQTT_BROKER_PORT
+	int "MQTT broker port"
+	default 1883
+	range 1 65535
+	help
+	  TCP port of the MQTT broker. Default 1883 is the standard
+	  unencrypted MQTT port (local dev/CI runs without TLS; documented
+	  limitation).
+
+config MQTT_TELEMETRY_TOPIC_FMT
+	string "Telemetry topic format (printf-style, one %s = device_id)"
+	default "devices/%s/telemetry"
+	help
+	  printf-style topic the telemetry publisher publishes to. The single
+	  %s is replaced with CONFIG_DEVICE_ID, yielding e.g.
+	  devices/native-sim-001/telemetry. The cloud ingestion service
+	  subscribes to the matching wildcard (devices/+/telemetry).
+
+config MQTT_CONNECT_TIMEOUT_MS
+	int "MQTT connect timeout (ms)"
+	default 5000
+	range 100 60000
+	help
+	  How long telemetry_connect() waits for CONNACK before giving up and
+	  returning -ETIMEDOUT. Connection is non-fatal: the application keeps
+	  sampling/logging and retries on the next cycle.

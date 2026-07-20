@@ -1,0 +1,8 @@
+# Kconfig — telemetry CBOR ztest suite.
+# Sources the shared application symbols so the suite shares one definition
+# (the encoder itself only depends on CONFIG_ZCBOR).
+
+mainmenu "telemetry cbor ztest"
+
+source "Kconfig.zephyr"
+source "$(APPLICATION_SOURCE_DIR)/../../Kconfig.appdefs"

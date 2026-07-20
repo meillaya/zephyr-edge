@@ -46,7 +46,7 @@ run: build
 test: init
     #!/usr/bin/env bash
     set -euo pipefail
-    suites=(bme280 sensor_log power_sched)
+    suites=(bme280 sensor_log power_sched telemetry)
     for suite in "${suites[@]}"; do
         echo ">> ztest: ${suite}"
         west build -b {{board}} -p auto -d "build/test-${suite}" "firmware/tests/${suite}"

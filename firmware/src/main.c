@@ -1,15 +1,22 @@
 /*
  * main.c — zephyr-edge-platform application loop.
  *
- * Wires the three Phase 1 subsystems together:
+ * Wires the platform subsystems together:
  *   1. Custom BME280 I2C sensor driver  (drivers/sensor/bme280_custom)
  *   2. Ring-buffered sensor logging      (sensor_log.c)
  *   3. Low-power sleep/wake scheduler    (power_sched.c)
+ *   4. MQTT telemetry publisher          (telemetry/, Phase 2)
  *
  * Each wake cycle, the power scheduler invokes an active-window callback that
  * samples the BME280 and pushes a timestamped reading into the ring buffer.
- * The main loop then drains the ring buffer (the seam where the Phase 2 MQTT
- * telemetry publisher attaches) and logs power-state statistics.
+ * The main loop then drains the ring buffer and publishes each reading as a
+ * CBOR-encoded MQTT telemetry message (docs/DATA_MODEL.md §1) to
+ * devices/<device_id>/telemetry, then services the MQTT connection (keepalive
+ * + PUBACK handling) and logs power-state statistics.
+ *
+ * Telemetry is best-effort: if the broker is unreachable (e.g. native_sim
+ * without host TAP/bridge setup), publishing is skipped and the sensor /
+ * logging / power loop continues unaffected.
  *
  * Log values are printed in integer milli-units to avoid pulling in floating
  * point printf support on the console.
@@ -24,6 +31,7 @@
 
 #include "power_sched.h"
 #include "sensor_log.h"
+#include "telemetry.h"
 
 LOG_MODULE_REGISTER(APP, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -62,16 +70,41 @@ static void sample_and_log(void *user_data)
 	}
 }
 
-/* Drain the ring buffer; this is the Phase 2 telemetry publisher seam. */
+/*
+ * Drain the ring buffer and publish each reading as CBOR telemetry. Attempts a
+ * (re)connect once per call when disconnected, then services the MQTT session.
+ */
 static void drain_and_publish(void)
 {
+	struct power_stats st;
+
+	power_sched_get_stats(&st);
+
+	if (!telemetry_is_connected()) {
+		(void)telemetry_connect(); /* best-effort, non-fatal */
+	}
+
 	struct sensor_reading reading;
 
 	while (sensor_log_get(&reading) == 0) {
-		LOG_INF("[telemetry] ts=%lld ms  T=%d mC  H=%d m%%RH  P=%d Pa",
-			reading.timestamp_ms, reading.temperature_mc,
-			reading.humidity_mpct, reading.pressure_pa);
+		int rc = telemetry_publish_reading(&reading, &st,
+						   (uint32_t)power_sched_state());
+
+		if (rc == 0) {
+			LOG_INF("[telemetry] published ts=%lld ms T=%d mC H=%d m%%RH "
+				"P=%d Pa",
+				reading.timestamp_ms, reading.temperature_mc,
+				reading.humidity_mpct, reading.pressure_pa);
+		} else {
+			LOG_INF("[telemetry] not published (rc=%d) ts=%lld ms T=%d mC "
+				"H=%d m%%RH P=%d Pa",
+				rc, reading.timestamp_ms, reading.temperature_mc,
+				reading.humidity_mpct, reading.pressure_pa);
+		}
 	}
+
+	/* Drive keepalive + PUBACK processing for the MQTT session. */
+	telemetry_process();
 }
 
 int main(void)
@@ -85,6 +118,10 @@ int main(void)
 
 	sensor_log_init();
 	power_sched_init(sample_and_log, NULL);
+
+	/* Phase 2: MQTT telemetry publisher (best-effort connect). */
+	telemetry_init();
+	(void)telemetry_connect();
 
 	LOG_INF("entering wake/sample/log/sleep loop: %d ms active + %d ms idle + "
 		"%d ms sleep per cycle",
