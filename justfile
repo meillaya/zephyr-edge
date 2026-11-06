@@ -99,8 +99,9 @@ demo devices="10":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    INFRA_DIR="$(pwd)/infra"
-    FLEET_SIM="$(pwd)/tests/fleet-sim"
+    ROOT="$(pwd)"
+    INFRA_DIR="${ROOT}/infra"
+    FLEET_SIM="${ROOT}/tests/fleet-sim"
     FLEET_PID=""
 
     cleanup() {
@@ -139,7 +140,9 @@ demo devices="10":
 
     # 3. Launch the fleet simulator.
     echo ">> starting fleet simulator with {{devices}} devices..."
-    (cd "${FLEET_SIM}" && go run . -n {{devices}}) &
+    (cd "${FLEET_SIM}" && go run . -n {{devices}} \
+        -tls -ca "${ROOT}/infra/tls/ca.crt" \
+        -username edge-device -password change-me) &
     FLEET_PID=$!
 
     # 4. Wait for telemetry to appear in Prometheus.
@@ -168,7 +171,7 @@ demo devices="10":
     echo "║  Grafana:      http://localhost:3000  (admin / admin)   ║"
     echo "║  Prometheus:   http://localhost:9091                    ║"
     echo "║  Cloud ingest: http://localhost:9090/metrics            ║"
-    echo "║  MQTT broker:  localhost:1883                           ║"
+    echo "║  MQTT broker:  localhost:8883 (TLS + password)          ║"
     echo "║  Fleet sim:    {{devices}} devices, PID ${FLEET_PID}              ║"
     echo "╠══════════════════════════════════════════════════════════╣"
     echo "║  Press Ctrl-C to stop the demo and tear down the stack. ║"
@@ -177,6 +180,22 @@ demo devices="10":
 
     # 6. Wait for the fleet sim to exit (or Ctrl-C).
     wait "$FLEET_PID"
+
+# Cross-build the nRF52840 DK application with real MCUboot (build-only).
+# Requires a Zephyr SDK unpacked at ZEPHYR_SDK_INSTALL_DIR.
+build-hil: init
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${ZEPHYR_SDK_INSTALL_DIR:-}" ]]; then
+        echo "ERROR: set ZEPHYR_SDK_INSTALL_DIR to the Zephyr SDK root" >&2
+        exit 2
+    fi
+    export ZEPHYR_TOOLCHAIN_VARIANT=cross-compile
+    export CROSS_COMPILE="${ZEPHYR_SDK_INSTALL_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-"
+    # The minimal toolchain tarball has no Zephyr-sdkConfig.cmake; use the
+    # cross-compile toolchain variant and avoid SDK package discovery.
+    unset ZEPHYR_SDK_INSTALL_DIR
+    west build -b nrf52840dk/nrf52840 --sysbuild -p always -d build-hil firmware
 
 # ── Local quality gates ──────────────────────────────────────────────
 
@@ -200,6 +219,10 @@ contract:
 e2e:
     ./tests/e2e/run.sh
 
+# Exercise the native_sim firmware's TLS MQTT path over a rootless TAP.
+firmware-tap:
+    ./tests/e2e/firmware-tap.sh
+
 # Publish an OTA image to a running device over MQTT.
-ota-sim image device="native-sim-001" broker="tcp://localhost:1883":
+ota-sim image device="native-sim-001" broker="tls://localhost:8883":
     cd tests/ota-sim && go run . -broker {{broker}} -device {{device}} -image {{image}}

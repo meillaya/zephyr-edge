@@ -18,7 +18,9 @@ running code and repository contracts. Historical reviews are archived under
 | A-08 | Medium | README listed a non-existent `bootloader/` repo dir and missing LICENSE, claimed the demo ran firmware, and stale reviews claimed 10/10 invariants. | MIT LICENSE; README simplified and corrected; demo docs distinguish fleet-sim vs firmware; historical reviews moved to `docs/reviews/` with banners; roadmap rewritten. |
 | A-09 | Low | QoS1 packet id derived from `seq`; `main()` returned 0 on fatal sensor init; cloud tests only used definite-length CBOR; `sensor_log` accepted use before init; `just init` ran `west update` every build. | Dedicated 16-bit packet id; `main()` returns `-ENODEV`; 75-byte golden firmware payload decoded by the cloud tests; init guards; `init` is offline-safe and `just update` refreshes. |
 | A-10 | Usability | No contract/e2e guard, fleet-sim tests absent from CI, no OTA publisher tool, no diagrams or unified check. | `check-contract.sh`, `tests/e2e`, `tests/ota-sim`, `just check`/`e2e`/`contract`/`ota-sim`; CI jobs; Excalidraw architecture/dataflow/demo/OTA diagrams. |
-| A-11 | Hardware | HIL scripts claimed an unvalidated nRF52840 path; real MCUboot swap was not enabled. | HIL README now states experimental/build-only status and MCUboot/sysbuild requirement; bme280 excluded; OTA-on-hardware remains roadmap. |
+| A-11 | Hardware | HIL scripts claimed an unvalidated nRF52840 path; real MCUboot swap was not enabled. | Added nRF52840 MCUboot board/sysbuild layout, signed-image verification, `just build-hil`, and CI cross-build; HIL remains build-only because no physical DK is available. |
+| A-12 | Security | MQTT was plaintext and unauthenticated. | TLS 1.2+ with CA verification and password authentication is now the default for firmware, cloud, fleet/OTA simulators, Compose, and e2e. Dev certs/passwords are clearly marked and rotate via `infra/tls/generate.sh`. |
+| A-13 | Hardware | The advertised nRF52840/MCUboot path had no buildable configuration. | Added board overlays, `firmware/sysbuild.conf`, `just build-hil`, signed-image verification, and a CI cross-build job. Physical swap/flash validation remains HIL. |
 
 ## Wire/API changes
 
@@ -47,17 +49,30 @@ All commands ran in the workspace with `devenv shell` on `native_sim/native/64`
 | `go test -race ./...` (cloud, fleet-sim) | PASS |
 | `E2E_MODE=local ./tests/e2e/run.sh` | PASS — fleet telemetry + 75-byte golden payload observed in `/metrics` |
 | `just power-bench` | PASS — non-zero ACTIVE/IDLE/SLEEP counters |
+| `E2E_MODE=local` with TLS | PASS — TLS broker, password auth, fleet + golden payload |
+| `just firmware-tap` | PASS — native_sim firmware completed TLS handshake, authenticated as `edge-device`, and published telemetry |
+| `COMPOSE="podman compose" just demo` | PASS — 10 devices, 860 messages, TLS, Grafana/Prometheus healthy |
+| `COMPOSE="podman compose" just e2e` | PASS — Docker-mode compose path via Podman, TLS fleet traffic observed |
+| `just build-hil` (nRF52840 + MCUboot) | PASS — cross-built, app signed (385 KB signed hex), `imgtool verify` accepted |
 | `shellcheck tests/...` | PASS (warning severity) |
-| `docker compose config` | PASS (static; no daemon available here) |
+| `docker compose config` | PASS |
 
 Re-run with `just check`; any deviation is a blocking defect.
 
 ## Residual risks
 
-- MQTT is plaintext and unauthenticated; local/trusted networks only.
-- The app stages OTA bytes but does not verify signatures; MCUboot must validate
-  on real hardware, and MCUboot/sysbuild is not enabled in the default app.
-- The nRF52840 path is not hardware-validated; `native_sim` is the supported
-  verification target.
+- The committed CA/server certificates and `change-me` passwords are
+  development material. They are sufficient to make the local/CI demo secure
+  against passive sniffing and anonymous publishes, but must be replaced and
+  kept in a secret store for any shared deployment.
+- The nRF52840 image is signed with MCUboot's **default debug key** and is
+  cross-built + signature-verified, not physically flashed/swap-tested. Set
+  `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` to a private production key, add an IP
+  transport (shield or Thread border router), and run the HIL checklist on a DK.
+- `native_sim` still simulates OTA staging; the real bootloader path is the
+  nRF52840 sysbuild target.
 - Fleet telemetry is synthetic.
 - Observability is local Docker/Podman only.
+- `just firmware-tap` verifies the firmware TLS handshake/auth/publish path
+  locally over a rootless TAP; CI cannot run it because it needs
+  `CAP_NET_ADMIN`/`/dev/net/tun`.

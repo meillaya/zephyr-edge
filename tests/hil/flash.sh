@@ -17,6 +17,7 @@
 #   ./flash.sh -a firmware/tests/ota   # build + flash a specific ztest suite
 #   ./flash.sh --runner pyocd          # use a different flash runner
 #   ./flash.sh --skip-build            # flash the existing build dir as-is
+#   ./flash.sh --sysbuild              # firmware + MCUboot (real swap path)
 #
 # Options:
 #   -b, --board BOARD      Target board (default: nrf52840dk/nrf52840, env BOARD)
@@ -25,6 +26,7 @@
 #   -d, --build-dir DIR    Build directory (default: build-hil)
 #   -r, --runner RUNNER    west flash runner (default: board default = jlink)
 #   -s, --skip-build       Skip the build step; flash the existing build dir
+#   --sysbuild             Build/flash the app with MCUboot (SB_CONFIG_BOOTLOADER_MCUBOOT)
 #   -h, --help             Show this help
 
 set -euo pipefail
@@ -40,6 +42,7 @@ APP="firmware"
 BUILD_DIR="build-hil"
 RUNNER=""
 SKIP_BUILD=0
+SYSBUILD=0
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -49,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         -d|--build-dir)  BUILD_DIR="$2"; shift 2 ;;
         -r|--runner)     RUNNER="$2";    shift 2 ;;
         -s|--skip-build) SKIP_BUILD=1;   shift ;;
+        --sysbuild)      SYSBUILD=1;      shift ;;
         -h|--help)
             awk 'NR>1{if(/^set -euo/)exit; if(/^#/)print}' "$SELF" | sed 's/^# \?//'
             exit 0
@@ -77,6 +81,13 @@ if [[ ! -e "$APP" ]]; then
     exit 1
 fi
 
+# The production app links at slot0 and is only bootable with MCUboot. Enable
+# sysbuild automatically unless the caller explicitly targets a test suite.
+if [[ "$APP" == "firmware" && "$SYSBUILD" -eq 0 ]]; then
+    echo ">> firmware app requires MCUboot; enabling --sysbuild"
+    SYSBUILD=1
+fi
+
 echo "=== HIL flash ==="
 echo "Repo root:  $ROOT"
 echo "Board:      $BOARD"
@@ -86,13 +97,22 @@ echo "Runner:     ${RUNNER:-<board default>}"
 echo ""
 
 # --- Build ---
+BUILD_ARGS=(-b "$BOARD" -p auto -d "$BUILD_DIR")
+if [[ "$SYSBUILD" -eq 1 ]]; then
+    BUILD_ARGS+=(--sysbuild)
+fi
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    echo ">> building $APP for $BOARD ..."
-    west build -b "$BOARD" -p auto -d "$BUILD_DIR" "$APP"
+    echo ">> building $APP for $BOARD (sysbuild=$SYSBUILD) ..."
+    west build "${BUILD_ARGS[@]}" "$APP"
 else
     echo ">> skipping build (--skip-build)"
-    if [[ ! -f "$BUILD_DIR/zephyr/zephyr.hex" && ! -f "$BUILD_DIR/zephyr/zephyr.bin" ]]; then
-        echo "WARNING: no zephyr.hex/zephyr.bin in $BUILD_DIR — flash may fail." >&2
+    if [[ "$SYSBUILD" -eq 1 ]]; then
+        image="$BUILD_DIR/firmware/zephyr/zephyr.hex"
+    else
+        image="$BUILD_DIR/zephyr/zephyr.hex"
+    fi
+    if [[ ! -f "$image" && ! -f "${image%.hex}.bin" ]]; then
+        echo "WARNING: no $image — flash may fail." >&2
     fi
 fi
 

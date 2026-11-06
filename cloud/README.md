@@ -10,7 +10,11 @@ topic/device identity, and exposes Prometheus metrics plus readiness.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MQTT_BROKER` | `tcp://localhost:1883` | MQTT broker URL |
+| `MQTT_BROKER` | `tls://localhost:8883` | MQTT broker URL; use `tls://` in normal operation |
+| `MQTT_TLS_CA` | `../infra/tls/ca.crt` | CA certificate for TLS (PEM) |
+| `MQTT_TLS_SERVER_NAME` | broker hostname | Override certificate/SNI name |
+| `MQTT_USERNAME` | `edge-ingest` | MQTT username (dev default) |
+| `MQTT_PASSWORD` | `change-me` | MQTT password (dev default) |
 | `MQTT_TOPIC` | `telemetry/+` | Subscription filter; must contain exactly one `+` level |
 | `HTTP_ADDR` | `:9090` | HTTP listen address |
 | `CLIENT_ID` | `cloud-ingest` | MQTT client identifier |
@@ -18,6 +22,11 @@ topic/device identity, and exposes Prometheus metrics plus readiness.
 The filter's `+` level is the device ID and must equal payload key 1; mismatches
 are dropped and counted in `telemetry_topic_mismatch_total`. Filters with `#` or
 no `+` are rejected at startup.
+
+TLS is verified against `MQTT_TLS_CA`; a missing CA or unreadable certificate
+file is a fatal startup error. Plaintext `tcp://` is accepted only when
+explicitly configured (for isolated tests). The committed CA/password are
+local-development credentials (see [`../infra/tls/README.md`](../infra/tls/README.md)).
 
 ## Endpoints
 
@@ -58,7 +67,12 @@ firmware ztest; it locks the indefinite-length CBOR wire format.
 
 ```bash
 docker build -t cloud-ingest .
-docker run -p 9090:9090 -e MQTT_BROKER=tcp://mosquitto:1883 cloud-ingest
+docker run --rm -p 9090:9090 \
+  -v "$PWD/../infra/tls:/certs:ro" \
+  -e MQTT_BROKER=tls://mosquitto:8883 \
+  -e MQTT_TLS_CA=/certs/ca.crt \
+  -e MQTT_USERNAME=edge-ingest -e MQTT_PASSWORD=change-me \
+  cloud-ingest
 ```
 
 The image runs as a non-root user (uid 10001).

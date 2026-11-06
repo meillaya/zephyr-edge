@@ -130,5 +130,8 @@ struct sensor_reading {
 The cloud subscriber's `MQTT_TOPIC` must contain exactly one `+` level; the
 default is `telemetry/+`. The topic-derived device ID is compared with key 1.
 
-Local dev/CI runs MQTT **without TLS or authentication** (documented
-limitation; use only on localhost/trusted networks).
+Local dev/CI runs MQTT over **TLS 1.2+ with password authentication** on port
+8883. The committed CA/server certificates and `change-me` passwords are
+development-only rotation material; a real deployment must supply its own CA,
+password, and signing keys. The cloud and fleet/OTA simulators default to
+`tls://...:8883`; explicit `tcp://` is available only for isolated tests.

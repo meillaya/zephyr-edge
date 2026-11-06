@@ -99,7 +99,7 @@ POWER_LINE=$(grep -E 'power:.*cycles=.*active=.*idle=.*sleep=' "$LOG_FILE" | tai
 if [[ -z "$POWER_LINE" ]]; then
     echo "ERROR: no power-state log lines found in the captured output." >&2
     echo "Build with firmware/boards/power_bench.conf (short cycles) or run longer:" >&2
-    echo "  just power-bench duration=10" >&2
+    echo "  just power-bench 10" >&2
     echo "Last output:" >&2
     tail -20 "$LOG_FILE" >&2
     exit 1

@@ -1,8 +1,9 @@
 # Roadmap
 
-The current tree is a working `native_sim` reference platform: firmware builds,
-all ztests run, the cloud pipeline is covered by unit + e2e tests, OTA and fault
-injection are wired and tested, and a reproducible sandbox exists.
+The current tree is a working reference platform: firmware builds, all ztests
+run, the cloud pipeline is covered by unit + e2e tests, OTA/fault injection are
+wired and tested, MQTT uses TLS + password auth, and an nRF52840/MCUboot
+cross-build is in CI. Physical hardware validation is the remaining step.
 
 ## Current state (v1.0 remediation)
 
@@ -13,6 +14,9 @@ injection are wired and tested, and a reproducible sandbox exists.
   flash-corruption hook, host publisher.
 - [x] Cloud: topic/device validation, `/health` readiness, golden CBOR fixture,
   main-package tests, new metrics.
+- [x] MQTT TLS 1.2+ with CA verification, password auth, and TLS e2e coverage.
+- [x] nRF52840 board + MCUboot sysbuild layout, signed-image verification,
+  `just build-hil`, and a hardware cross-build CI job.
 - [x] Contract/e2e/CI/power-bench/HIL script fixes.
 - [x] README stays simple; architecture, data-model, OTA, and audit docs added;
   Excalidraw diagrams.
@@ -20,8 +24,10 @@ injection are wired and tested, and a reproducible sandbox exists.
 
 ## Next: hardware validation
 
-1. Flash an nRF52840 DK with an MCUboot partition layout and `--sysbuild`
-   (`SB_CONFIG_BOOTLOADER_MCUBOOT=y`), then run the ztests on the bench.
+1. Flash the already-cross-built nRF52840 DK image (`just build-hil` output)
+   and run the HIL checklist; verify MCUboot swap-move and signature rejection
+   with a deliberately invalid image. Add an IP transport (Ethernet/Wi-Fi
+   shield or Thread border router) for live MQTT/OTA.
 2. Wire a real BME280 on I2C and validate readings against a reference
    (±0.5 °C, ±3 %RH, ±1 hPa); the `bme280` ztest currently asserts the
    native_sim emulator fixture and needs a bench-specific expected-value mode.
@@ -33,8 +39,8 @@ injection are wired and tested, and a reproducible sandbox exists.
 
 | Item | Why |
 |------|-----|
-| MQTT TLS / PSK / username-password | Plaintext MQTT is local-only today. |
-| OTA image signature/auth policy | The app stages bytes; MCUboot must validate them. |
+| Production signing key/rotation | MCUboot currently signs with its default debug key; replace it and document rotation. |
+| Physical hardware HIL | The nRF52840/MCUboot path is cross-built and signature-verified, not flashed. |
 | OTA status topic (`status/<device_id>`) | Gives the publisher/operator completion feedback. |
 | CBOR schema registry / version gate | Prevents silent decode failures at scale. |
 | BLE transport alongside MQTT | Uses the nRF52840 radio; currently unused. |
@@ -43,6 +49,9 @@ injection are wired and tested, and a reproducible sandbox exists.
 
 ## Explicit non-goals for now
 
-- BLE, cloud deployment, and TLS are out of scope for the local sandbox.
+- BLE and a hosted cloud deployment are out of scope for the local reference
+  stack.
 - The fleet simulator remains synthetic; it is a pipeline load generator, not a
   hardware model.
+- The committed demo certificates/passwords are not a production PKI; they are
+  local-development rotation material.

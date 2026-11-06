@@ -4,12 +4,16 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -100,16 +104,50 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// mqttTLSConfig loads the CA and returns a TLS config for tls:// / ssl://
+// brokers. Plaintext brokers return (nil, nil) only when explicitly selected.
+func mqttTLSConfig(broker string) (*tls.Config, error) {
+	if !strings.HasPrefix(broker, "tls://") && !strings.HasPrefix(broker, "ssl://") {
+		return nil, nil
+	}
+
+	caFile := envOr("MQTT_TLS_CA", "../infra/tls/ca.crt")
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read MQTT_TLS_CA %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("MQTT_TLS_CA %q contains no usable certificates", caFile)
+	}
+
+	u, err := url.Parse(broker)
+	if err != nil {
+		return nil, fmt.Errorf("parse MQTT_BROKER %q: %w", broker, err)
+	}
+	serverName := envOr("MQTT_TLS_SERVER_NAME", u.Hostname())
+	return &tls.Config{
+		RootCAs:    pool,
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+	}, nil
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	mqttBroker := envOr("MQTT_BROKER", "tcp://localhost:1883")
+	mqttBroker := envOr("MQTT_BROKER", "tls://localhost:8883")
 	mqttTopic := envOr("MQTT_TOPIC", "telemetry/+")
 	httpAddr := envOr("HTTP_ADDR", ":9090")
 	clientID := envOr("CLIENT_ID", "cloud-ingest")
+	tlsConfig, err := mqttTLSConfig(mqttBroker)
+	if err != nil {
+		slog.Error("MQTT TLS configuration failed", "error", err)
+		os.Exit(1)
+	}
 
 	if err := validateTopicFilter(mqttTopic); err != nil {
 		slog.Error("invalid MQTT_TOPIC", "topic", mqttTopic, "error", err)
@@ -121,6 +159,8 @@ func main() {
 	opts := mqtt.NewClientOptions().
 		AddBroker(mqttBroker).
 		SetClientID(clientID).
+		SetUsername(envOr("MQTT_USERNAME", "edge-ingest")).
+		SetPassword(envOr("MQTT_PASSWORD", "change-me")).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
@@ -138,6 +178,9 @@ func main() {
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			slog.Warn("mqtt connection lost", "error", err)
 		})
+	if tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 
 	client := mqtt.NewClient(opts)
 	connectTok := client.Connect()

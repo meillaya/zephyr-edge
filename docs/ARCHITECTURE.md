@@ -40,8 +40,13 @@ Grafana.
    keepalive/PUBACK/PUBLISH handling responsive (including OTA frames).
 6. Inbound PUBLISH payloads are read from the socket, matched against
    `cmd/<device_id>/ota`, dispatched to the OTA state machine, and acknowledged.
-7. OTA frames write to `slot1`; on finish the image is marked for MCUboot swap
+7. The host `fleet-sim` path connects to Mosquitto over TLS 1.2+ with password
+   authentication; the firmware build embeds the dev CA and uses the same
+   transport.
+8. OTA frames write to `slot1`; on finish the image is marked for MCUboot swap
    (or staged in the simulator).
+9. The nRF52840 sysbuild adds MCUboot, which verifies the signed application
+   before booting it; `native_sim` simulates the final swap.
 
 ## Wire contract
 
@@ -62,8 +67,11 @@ Grafana.
   fully local, hardware-free path; it does not run the firmware binary because
   `native_sim` needs a host TAP/bridge for live MQTT.
 - `E2E_MODE=local tests/e2e/run.sh` starts Mosquitto + cloud-ingest directly
-  and publishes both fleet telemetry and the firmware golden payload.
-- `just e2e` runs the Docker variant (used by CI).
+  over TLS and publishes both fleet telemetry and the firmware golden payload.
+- `just e2e` runs the Docker/Podman Compose variant (used by CI).
+- `just firmware-tap` runs the actual `native_sim` firmware against a
+  TLS+password Mosquitto over a rootless TAP, proving the embedded-CA handshake,
+  authenticated CONNECT, and telemetry publish path.
 - Real firmware telemetry requires either an nRF52840 (HIL roadmap) or the
   `native_sim` TAP setup documented by Zephyr; the wire bytes themselves are
   proven by the golden tests.

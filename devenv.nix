@@ -63,6 +63,9 @@ lib.mkMerge [
         pyyaml
         anytree
         intelhex
+        click # MCUboot imgtool signer
+        cryptography # MCUboot imgtool signer
+        cbor2 # MCUboot imgtool boot records
         packaging
         progress
         psutil

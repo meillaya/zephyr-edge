@@ -3,6 +3,7 @@
 # Jobs:
 #   firmware-build   – build the Zephyr firmware for native_sim/native/64
 #   firmware-test    – run all ztest suites on native_sim/native/64
+#   hardware-build   – cross-build nRF52840 DK + MCUboot and verify signature
 #   go-test          – race tests + vet for cloud, fleet-sim, and ota-sim
 #   contract         – topic/frame/golden/README contract guard
 #   compose-e2e      – real broker → cloud → Prometheus/Grafana pipeline test
@@ -125,6 +126,78 @@ jobs:
             echo "::endgroup::"
           done
           echo ">> all ztest suites passed"
+
+  # ── Hardware cross-build (nRF52840 + MCUboot) ──────────────────────
+  hardware-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends             cmake ninja-build gperf device-tree-compiler pkg-config             python3-venv python3-pip libusb-1.0-0-dev
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install west pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools \
+            click cryptography cbor2
+
+      - name: Cache west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            zephyr
+            modules
+            tools
+            bootloader
+            .west
+          key: west-${{ hashFiles('firmware/west.yml') }}-${{ runner.os }}
+
+      - name: West init + update
+        run: |
+          . .venv/bin/activate
+          if [ ! -d .west ]; then west init -l firmware; fi
+          if [ ! -d zephyr ]; then west update; fi
+
+      - name: Cache minimal Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: .zephyr-sdk-0.17.0
+          key: zephyr-sdk-0.17.0-arm-${{ runner.os }}
+
+      - name: Download Zephyr ARM toolchain
+        run: |
+          if [ ! -x .zephyr-sdk-0.17.0/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc ]; then
+            mkdir -p .zephyr-sdk-0.17.0
+            curl -fL --retry 3 -o /tmp/zephyr-sdk-arm.tar.xz \
+              https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.17.0/toolchain_linux-x86_64_arm-zephyr-eabi.tar.xz
+            tar -xJf /tmp/zephyr-sdk-arm.tar.xz -C .zephyr-sdk-0.17.0
+          fi
+
+      - name: Build nRF52840 with MCUboot
+        run: |
+          . .venv/bin/activate
+          export ZEPHYR_TOOLCHAIN_VARIANT=cross-compile
+          export CROSS_COMPILE="$PWD/.zephyr-sdk-0.17.0/arm-zephyr-eabi/bin/arm-zephyr-eabi-"
+          west build -b nrf52840dk/nrf52840 --sysbuild -d build-hil -p always firmware
+
+      - name: Verify signed image
+        run: |
+          . .venv/bin/activate
+          python3 bootloader/mcuboot/scripts/imgtool.py verify \
+            --key bootloader/mcuboot/root-rsa-2048.pem \
+            build-hil/firmware/zephyr/zephyr.signed.bin
+
+      - name: Upload MCUboot artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nrf52840-mcuboot
+          path: |
+            build-hil/mcuboot/zephyr/zephyr.hex
+            build-hil/firmware/zephyr/zephyr.signed.hex
+          retention-days: 7
 
   # ── Go tests ────────────────────────────────────────────────────────
   go-test:

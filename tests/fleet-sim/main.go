@@ -16,19 +16,23 @@
 //
 // Usage:
 //
-//	go run main.go -n 50                     # 50 devices @ 1s to localhost:1883
+//	go run main.go -n 50                     # 50 devices @ 1s over TLS
 //	go run main.go -n 100 -interval 500ms    # 100 devices, 2 samples/s each
-//	go run main.go -broker tcp://host:1883 -duration 30s
+//	go run main.go -broker tls://host:8883 -duration 30s
 package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -296,7 +300,12 @@ func main() {
 
 	// ── Flags (with env fallbacks matching the cloud service's conventions) ──
 	numDevices := flag.Int("n", 50, "number of simulated devices (fleet-sim-1..N)")
-	broker := flag.String("broker", envOr("MQTT_BROKER", "tcp://localhost:1883"), "MQTT broker URL")
+	broker := flag.String("broker", envOr("MQTT_BROKER", "tls://localhost:8883"), "MQTT broker URL")
+	tlsEnabled := flag.Bool("tls", envOr("MQTT_TLS", "true") == "true", "connect with TLS")
+	caFile := flag.String("ca", envOr("MQTT_TLS_CA", "../../infra/tls/ca.crt"), "CA certificate for TLS")
+	serverName := flag.String("server-name", envOr("MQTT_TLS_SERVER_NAME", ""), "TLS server name (default: broker host)")
+	username := flag.String("username", envOr("MQTT_USERNAME", "edge-device"), "MQTT username")
+	password := flag.String("password", envOr("MQTT_PASSWORD", "change-me"), "MQTT password")
 	interval := flag.Duration("interval", 1*time.Second, "publish interval per device")
 	duration := flag.Duration("duration", 0, "how long to run (0 = until interrupted)")
 	clientID := flag.String("client-id", envOr("CLIENT_ID", "fleet-sim"), "MQTT client ID")
@@ -317,12 +326,23 @@ func main() {
 		os.Exit(2)
 	}
 
+	var tlsConfig *tls.Config
+	if *tlsEnabled {
+		var err error
+		tlsConfig, err = loadTLSConfig(*broker, *caFile, *serverName)
+		if err != nil {
+			slog.Error("TLS configuration failed", "error", err)
+			os.Exit(2)
+		}
+	}
+
 	slog.Info("fleet-sim starting",
 		"devices", *numDevices,
 		"broker", *broker,
 		"interval", interval.String(),
 		"duration", duration.String(),
 		"qos", *qos,
+		"tls", *tlsEnabled,
 	)
 
 	// ── Context: cancelled on SIGINT/SIGTERM, and bounded if -duration is set ──
@@ -334,16 +354,41 @@ func main() {
 		defer cancel()
 	}
 
-	runFleet(ctx, *numDevices, *broker, *clientID, byte(*qos), *interval, *seed)
+	runFleet(ctx, *numDevices, *broker, *clientID, byte(*qos), *interval, *seed,
+		tlsConfig, *username, *password)
+}
+
+func loadTLSConfig(broker, caFile, serverName string) (*tls.Config, error) {
+	if !strings.HasPrefix(broker, "tls://") && !strings.HasPrefix(broker, "ssl://") {
+		return nil, fmt.Errorf("TLS enabled but broker is not tls://: %s", broker)
+	}
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("CA %q contains no usable certificates", caFile)
+	}
+	u, err := url.Parse(broker)
+	if err != nil {
+		return nil, fmt.Errorf("parse broker %q: %w", broker, err)
+	}
+	if serverName == "" {
+		serverName = u.Hostname()
+	}
+	return &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS12}, nil
 }
 
 // runFleet connects to the broker, spawns one publishing goroutine per device,
 // and blocks until ctx is cancelled, then shuts down cleanly.
-func runFleet(ctx context.Context, numDevices int, broker, clientID string, qos byte, interval time.Duration, seed uint64) {
+func runFleet(ctx context.Context, numDevices int, broker, clientID string, qos byte, interval time.Duration, seed uint64, tlsConfig *tls.Config, username, password string) {
 	// ── Shared MQTT client (safe for concurrent Publish) ──
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
 		SetClientID(clientID).
+		SetUsername(username).
+		SetPassword(password).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(2 * time.Second).
@@ -354,6 +399,9 @@ func runFleet(ctx context.Context, numDevices int, broker, clientID string, qos 
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			slog.Warn("mqtt connection lost", "error", err)
 		})
+	if tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 
 	client := mqtt.NewClient(opts)
 	tok := client.Connect()

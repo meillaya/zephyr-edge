@@ -6,25 +6,35 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     ports:
-      - "1883:1883"
+      - "8883:8883"
     volumes:
       - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/config/passwd:/mosquitto/config/passwd:ro
+      - ./tls:/mosquitto/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -W 3 || exit 1"]
+      test:
+        - "CMD-SHELL"
+        - "mosquitto_sub -h localhost -p 8883 --cafile /mosquitto/certs/ca.crt -u edge-device -P change-me -t '$$SYS/broker/version' -C 1 -W 3 || exit 1"
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 5s
+      retries: 5
+      start_period: 10s
 
   cloud-ingest:
     build:
       context: ../cloud
       dockerfile: Dockerfile
     environment:
-      MQTT_BROKER: tcp://mosquitto:1883
+      MQTT_BROKER: tls://mosquitto:8883
+      MQTT_TLS_CA: /certs/ca.crt
+      MQTT_TLS_SERVER_NAME: mosquitto
+      MQTT_USERNAME: edge-ingest
+      MQTT_PASSWORD: change-me
       MQTT_TOPIC: "telemetry/+"
       HTTP_ADDR: ":9090"
       CLIENT_ID: cloud-ingest
+    volumes:
+      - ./tls:/certs:ro
     ports:
       - "9090:9090"
     depends_on:

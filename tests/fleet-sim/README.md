@@ -38,11 +38,14 @@ Then run the simulator:
 ```bash
 cd tests/fleet-sim
 
-go run . -n 50                      # 50 devices @ 1s → tcp://localhost:1883
+go run . -n 50                      # 50 devices @ 1s over TLS
 go run . -n 100 -interval 500ms     # 100 devices, 2 samples/s each
 go run . -duration 30s              # auto-stop after 30s
-go run . -broker tcp://host:1883    # point at a different broker
+go run . -broker tls://host:8883 -ca /path/to/ca.crt
 ```
+
+For an isolated unencrypted broker, pass `-tls=false -broker tcp://host:1883`.
+The credential defaults match the dev stack and are not production secrets.
 
 Watch it land:
 
@@ -54,7 +57,12 @@ Watch it land:
 | Flag          | Env            | Default                  | Description                              |
 |---------------|----------------|--------------------------|------------------------------------------|
 | `-n`          | —              | `50`                     | number of simulated devices              |
-| `-broker`     | `MQTT_BROKER`  | `tcp://localhost:1883`   | MQTT broker URL                          |
+| `-broker`     | `MQTT_BROKER`  | `tls://localhost:8883`   | MQTT broker URL                          |
+| `-tls`        | `MQTT_TLS`     | `true`                   | connect with TLS                         |
+| `-ca`         | `MQTT_TLS_CA`  | `../../infra/tls/ca.crt` | CA certificate for TLS                   |
+| `-server-name`| `MQTT_TLS_SERVER_NAME` | broker host     | TLS certificate/SNI name                 |
+| `-username`   | `MQTT_USERNAME`| `edge-device`            | MQTT username                            |
+| `-password`   | `MQTT_PASSWORD`| `change-me`              | MQTT password (dev only)                 |
 | `-interval`   | —              | `1s`                     | publish interval per device              |
 | `-duration`   | —              | `0` (until interrupted)  | how long to run                          |
 | `-client-id`  | `CLIENT_ID`    | `fleet-sim`              | MQTT client ID                           |

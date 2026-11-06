@@ -59,8 +59,8 @@ On reconnect or disconnect during `RECEIVING`, the partial image is abandoned
   `CONFIG_BOOTLOADER_MCUBOOT` is enabled; otherwise the image is staged in the
   flash simulator and a log line notes that no real swap occurs.
 - `CONFIG_OTA_MAX_IMAGE_SIZE` must fit `slot1_partition`; this is a compile-time
-  assert on native_sim. A real board needs an MCUboot partition layout (see
-  `docs/ROADMAP.md`).
+  assert. The nRF52840 DK overlay provides a real 448 KiB slot1, and the same
+  assert applies there.
 - `CONFIG_IMG_ERASE_PROGRESSIVELY=y` erases slot1 pages as chunks arrive; this
   is required for NOR flash and makes repeated simulator sessions deterministic.
 - With `CONFIG_FAULT_INJECT_FLASH_CORRUPT=y`, every byte is inverted before the
@@ -69,11 +69,13 @@ On reconnect or disconnect during `RECEIVING`, the partial image is abandoned
 ## Host publisher
 
 ```bash
-# Build an image first, e.g. `west build -b nrf52840dk/nrf52840 --sysbuild firmware`
-just ota-sim image=build/zephyr/zephyr.bin device=nrf52840-001
+# Build an image first, e.g. `just build-hil` (nRF52840 + MCUboot).
+just ota-sim build-hil/firmware/zephyr/zephyr.signed.bin nrf52840-001
 # or:
 cd tests/ota-sim
-go run . -broker tcp://localhost:1883 -device native-sim-001 -image /path/image.bin
+go run . -broker tls://localhost:8883 -ca ../../infra/tls/ca.crt \
+  -username edge-device -password change-me \
+  -device native-sim-001 -image /path/image.bin
 ```
 
 The tool publishes start → chunked data → finish with QoS1 and sends abort on
@@ -81,13 +83,39 @@ interrupt/failure. It stops at the publisher; there is no device status topic
 yet, so confirm completion on the console (or after reboot for a real MCUboot
 swap).
 
+## Real MCUboot path (nRF52840 DK)
+
+The default `native_sim` build still simulates staging because it has no real
+bootloader flash offset. The hardware path is a separate sysbuild:
+
+```bash
+# Requires Zephyr SDK; see docs/ROADMAP and tests/hil/README.
+just build-hil
+# -> build-hil/mcuboot/zephyr/zephyr.hex
+# -> build-hil/firmware/zephyr/zephyr.signed.hex
+```
+
+- `firmware/sysbuild.conf` selects `SB_CONFIG_BOOTLOADER_MCUBOOT=y`.
+- `firmware/boards/nrf52840dk_nrf52840.overlay` defines boot/slot0/slot1 and a
+  448 KiB slot1; MCUboot uses the default swap-using-move mode.
+- The application calls `boot_request_upgrade(BOOT_UPGRADE_TEST)`, and MCUboot
+  verifies the signed image before booting/swapping it.
+- **Signing key:** sysbuild currently uses MCUboot's default debug RSA key and
+  prints a warning. For a real deployment set
+  `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` to your private key and keep it out of git.
+- The hardware path is cross-build/CI validated here, not physically flashed
+  (see residual risks). The DK also needs an IP transport (shield or Thread
+  border router) before MQTT/OTA traffic can reach it.
+
 ## Security and limitations
 
-- The local dev/CI stack runs MQTT without TLS or authentication. Do not expose
-  `1883` or the OTA topic to untrusted networks.
-- The application does not verify image signatures itself. On real hardware,
-  MCUboot must validate the image; without `CONFIG_BOOTLOADER_MCUBOOT` +
-  sysbuild, `native_sim` only simulates staging/marking.
+- MQTT is TLS 1.2+ with password authentication by default. The committed
+  CA/server certificates and `change-me` passwords are **dev-only**; rotate them
+  and keep private keys in a secret store before exposing the broker or OTA
+  topic to untrusted networks.
+- On hardware, MCUboot validates the signed image before swap. On `native_sim`,
+  the application still only simulates staging/marking because there is no
+  bootloader; do not treat the simulator log as proof of a secure boot.
 - A protocol version byte is not included; the topic is versioned implicitly by
   `schema_version`-style deployment. Changing frame semantics is a breaking
   change (pre-1.0).

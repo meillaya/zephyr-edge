@@ -2,7 +2,7 @@
 // OTA frame protocol in docs/OTA.md. It is the host-side counterpart of
 // firmware/src/ota/ota_update.c and is intended for hardware-in-the-loop use:
 //
-//	go run . -broker tcp://localhost:1883 -device nrf52840-001 -image build/zephyr/zephyr.bin
+//	go run . -broker tls://localhost:8883 -device nrf52840-001 -image build/zephyr/zephyr.bin
 //
 // The device does not currently publish an OTA status topic, so success is
 // confirmed from the device console (or by the MCUboot swap after reboot).
@@ -10,10 +10,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -28,15 +31,20 @@ func main() {
 	slog.SetDefault(logger)
 
 	var (
-		broker    = flag.String("broker", envOr("MQTT_BROKER", "tcp://localhost:1883"), "MQTT broker URL")
-		device    = flag.String("device", "native-sim-001", "target device ID")
-		imagePath = flag.String("image", "", "firmware image file to publish")
-		topicFmt  = flag.String("topic", "cmd/%s/ota", "OTA command topic format (one %s)")
-		chunkSize = flag.Int("chunk", 512, "data chunk size in bytes")
-		delay     = flag.Duration("delay", 10*time.Millisecond, "delay between publishes")
-		qos       = flag.Int("qos", 1, "MQTT QoS (0 or 1)")
-		clientID  = flag.String("client-id", "ota-sim", "MQTT client ID")
-		maxSize   = flag.Int("max-size", 262144, "maximum accepted image size in bytes")
+		broker     = flag.String("broker", envOr("MQTT_BROKER", "tls://localhost:8883"), "MQTT broker URL")
+		tlsEnabled = flag.Bool("tls", envOr("MQTT_TLS", "true") == "true", "connect with TLS")
+		caFile     = flag.String("ca", envOr("MQTT_TLS_CA", "../../infra/tls/ca.crt"), "CA certificate for TLS")
+		serverName = flag.String("server-name", envOr("MQTT_TLS_SERVER_NAME", ""), "TLS server name (default: broker host)")
+		username   = flag.String("username", envOr("MQTT_USERNAME", "edge-device"), "MQTT username")
+		password   = flag.String("password", envOr("MQTT_PASSWORD", "change-me"), "MQTT password")
+		device     = flag.String("device", "native-sim-001", "target device ID")
+		imagePath  = flag.String("image", "", "firmware image file to publish")
+		topicFmt   = flag.String("topic", "cmd/%s/ota", "OTA command topic format (one %s)")
+		chunkSize  = flag.Int("chunk", 512, "data chunk size in bytes")
+		delay      = flag.Duration("delay", 10*time.Millisecond, "delay between publishes")
+		qos        = flag.Int("qos", 1, "MQTT QoS (0 or 1)")
+		clientID   = flag.String("client-id", "ota-sim", "MQTT client ID")
+		maxSize    = flag.Int("max-size", 262144, "maximum accepted image size in bytes")
 	)
 	flag.Parse()
 
@@ -69,11 +77,26 @@ func main() {
 
 	topic := fmt.Sprintf(*topicFmt, *device)
 
+	var tlsConfig *tls.Config
+	if *tlsEnabled {
+		var err error
+		tlsConfig, err = loadTLSConfig(*broker, *caFile, *serverName)
+		if err != nil {
+			slog.Error("TLS configuration failed", "error", err)
+			os.Exit(2)
+		}
+	}
+
 	opts := mqtt.NewClientOptions().
 		AddBroker(*broker).
 		SetClientID(*clientID).
+		SetUsername(*username).
+		SetPassword(*password).
 		SetAutoReconnect(false).
 		SetConnectTimeout(15 * time.Second)
+	if tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 	client := mqtt.NewClient(opts)
 	tok := client.Connect()
 	if !tok.WaitTimeout(20 * time.Second) {
@@ -138,4 +161,26 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func loadTLSConfig(broker, caFile, serverName string) (*tls.Config, error) {
+	if !strings.HasPrefix(broker, "tls://") && !strings.HasPrefix(broker, "ssl://") {
+		return nil, fmt.Errorf("TLS enabled but broker is not tls://: %s", broker)
+	}
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("CA %q contains no usable certificates", caFile)
+	}
+	u, err := url.Parse(broker)
+	if err != nil {
+		return nil, fmt.Errorf("parse broker %q: %w", broker, err)
+	}
+	if serverName == "" {
+		serverName = u.Hostname()
+	}
+	return &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS12}, nil
 }

@@ -4,7 +4,7 @@ docker-compose stack for local development and CI:
 
 | Service        | Image                    | Port  | Purpose                          |
 |----------------|--------------------------|-------|----------------------------------|
-| `mosquitto`    | `eclipse-mosquitto:2`    | 1883  | MQTT broker (no TLS — dev only)  |
+| `mosquitto`    | `eclipse-mosquitto:2`    | 8883  | MQTT broker (TLS + password)     |
 | `cloud-ingest` | built from `../cloud/`   | 9090  | Go telemetry ingestion + metrics |
 | `prometheus`   | `prom/prometheus:v3.4.0` | 9091  | Metrics scraping + storage       |
 | `grafana`      | `grafana/grafana:11.5.2` | 3000  | Dashboards (auto-provisioned)    |
@@ -19,11 +19,17 @@ docker compose up -d --build
 
 - **Grafana**: http://localhost:3000 (admin/admin)
 - **Prometheus**: http://localhost:9091
-- **MQTT**: localhost:1883
+- **MQTT**: `localhost:8883` over TLS; users `edge-device` / `edge-ingest`, password `change-me` (dev only)
 - **cloud-ingest**: http://localhost:9090/metrics (and `/health` readiness)
 
 `cloud-ingest` runs as a non-root user and its health check returns 503 until
-the MQTT subscription is connected.
+the MQTT subscription is connected. It connects with `tls://mosquitto:8883`,
+uses `/certs/ca.crt`, and authenticates as `edge-ingest`.
+
+The committed `tls/` certificates and `mosquitto/config/passwd` are local
+development credentials. They are intentionally in the repo so the demo works
+out of the box; never reuse them for a shared deployment. See
+[`tls/README.md`](tls/README.md) to regenerate and rotate.
 
 ## Auto-provisioned dashboard
 

@@ -184,7 +184,7 @@ func TestFleetPublishesOverMQTT(t *testing.T) {
 	defer cancel()
 
 	// 200ms interval → each device publishes ~20–25 times in 5s.
-	runFleet(ctx, numDevices, b.url(), "fleet-sim-test", 1, 200*time.Millisecond, 1234)
+	runFleet(ctx, numDevices, b.url(), "fleet-sim-test", 1, 200*time.Millisecond, 1234, nil, "", "")
 
 	msgs := b.snapshot()
 	if len(msgs) == 0 {

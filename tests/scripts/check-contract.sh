@@ -31,6 +31,19 @@ require_grep 'cmd/<device_id>/ota' docs/DATA_MODEL.md "data model OTA topic"
 require_grep 'opStart  byte = 0x01' tests/ota-sim/frame.go "ota-sim start opcode"
 require_grep 'OTA_FRAME_START = 0x01' firmware/src/ota/ota_update.h "firmware start opcode"
 
+# ── MQTT transport security contract ─────────────────────────────────
+require_grep '^listener 8883' infra/mosquitto/config/mosquitto.conf "mosquitto TLS listener"
+require_grep '^allow_anonymous false' infra/mosquitto/config/mosquitto.conf "mosquitto auth"
+require_grep '^cafile /mosquitto/certs/ca.crt' infra/mosquitto/config/mosquitto.conf "mosquitto CA"
+require_grep 'tls://mosquitto:8883' infra/docker-compose.yml "compose TLS broker"
+require_grep 'default 8883 if MQTT_TLS' firmware/Kconfig.appdefs "firmware TLS port"
+require_grep 'MQTT_TRANSPORT_SECURE' firmware/src/telemetry/telemetry.c "firmware TLS transport"
+require_grep 'envOr\("MQTT_BROKER", "tls://' cloud/main.go "cloud TLS default"
+[[ -s infra/tls/ca.crt && -s infra/tls/server.crt && -s infra/tls/server.key ]] \
+    || fail "missing dev TLS material"
+[[ -s infra/mosquitto/config/passwd ]] || fail "missing MQTT password file"
+[[ -s firmware/src/telemetry/telemetry_ca_cert.h ]] || fail "missing embedded CA header"
+
 # ── Shared golden CBOR fixture ───────────────────────────────────────
 golden="cloud/telemetry/testdata/firmware-v1.cbor"
 [[ -f "$golden" ]] || fail "missing golden payload: $golden"
@@ -59,4 +72,4 @@ while IFS= read -r link; do
     [[ -e "$path" ]] || fail "README link target missing: $path"
 done < <(grep -oE '\]\([^)]+' README.md | sed 's/^](//')
 
-echo "contract ok: topics, OTA frames, golden payload, README links"
+echo "contract ok: topics, OTA frames, TLS/auth, golden payload, README links"

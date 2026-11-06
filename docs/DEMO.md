@@ -27,8 +27,8 @@ All host tools are available inside `devenv shell` except the container runtime.
 ```bash
 # From the repository root:
 just demo                 # 10 simulated devices (default)
-just demo devices=50      # 50 simulated devices
-COMPOSE="podman compose" just demo   # Podman users
+just demo 50              # 50 simulated devices (positional)
+COMPOSE="podman compose" just demo   # Podman users (see note below)
 ```
 
 The command:
@@ -42,16 +42,31 @@ The command:
 `just demo` exits non-zero if the pipeline never becomes healthy or no
 telemetry is observed within 60s.
 
+Podman users need the rootless API socket. If `podman compose config` reports
+the Docker daemon is unavailable, start it once and point Compose at it:
+
+```bash
+podman system service --time=0 &
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+COMPOSE="podman compose" just demo
+```
+
 ## Automated pipeline test
 
 ```bash
 just e2e                  # Docker mode
-E2E_MODE=local just e2e   # Mosquitto + cloud binary, no Docker (sandbox/VM)
+E2E_MODE=local just e2e   # Mosquitto + cloud binary, no Docker
+COMPOSE="podman compose" just e2e   # Podman
 ```
 
 The test publishes fleet telemetry, asserts cloud metrics, and (in local mode)
 publishes the firmware's golden CBOR payload to prove the actual wire bytes are
 accepted by the real cloud decoder.
+
+`just firmware-tap` additionally runs the real `native_sim` firmware against a
+TLS+password Mosquitto over a rootless TAP interface; it asserts the TLS
+handshake, authenticated CONNECT, and a published telemetry message. This is a
+local/bench check because it needs `/dev/net/tun` and `CAP_NET_ADMIN`.
 
 ## Dashboard URLs
 
@@ -60,7 +75,7 @@ accepted by the real cloud decoder.
 | Grafana | http://localhost:3000 | admin / admin |
 | Prometheus | http://localhost:9091 | — |
 | Cloud ingest | http://localhost:9090/metrics | — |
-| MQTT broker | localhost:1883 | anonymous (dev) |
+| MQTT broker | `localhost:8883` (TLS) | `edge-device` / `change-me` (dev) |
 
 ## Grafana dashboard
 
@@ -94,9 +109,12 @@ cd infra && docker compose down -v
 | cloud-ingest unhealthy | Broker not ready or MQTT not connected | `docker compose logs mosquitto cloud-ingest` |
 | No telemetry in Prometheus | Fleet sim not publishing | Check fleet-sim stdout for MQTT errors |
 | Grafana "No data" | Prometheus scrape delay | Wait 15–30s; check Prometheus targets |
-| Port conflict (1883/9090/9091/3000) | Another service | `ss -ltnp` and stop the conflict |
+| Port conflict (8883/9090/9091/3000) | Another service | `ss -ltnp` and stop the conflict |
 
 ## Security note
 
-MQTT runs without TLS or authentication in this demo; bind it to localhost only.
-See [`DATA_MODEL.md`](DATA_MODEL.md) §4 and [`OTA.md`](OTA.md).
+The demo broker listens on **8883 with TLS + password authentication**. The
+committed CA/server certificates and `change-me` passwords are local-development
+material only (`infra/tls/README.md`); rotate them and keep private keys in a
+secret store before exposing the stack. See [`DATA_MODEL.md`](DATA_MODEL.md) §4
+and [`OTA.md`](OTA.md).

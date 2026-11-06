@@ -151,7 +151,7 @@ def architecture():
     e += box("mqtt", "MQTT client\nQoS1 + inbound PUBLISH", 310, 380, 210, 72, BLUE, S_BLUE)
     e += box("ota", "OTA receiver\nframes → slot1", 310, 490, 210, 72, RED, S_RED)
     e += box("fault", "fault_inject\nsensor / flash / drop", 55, 490, 220, 72, YELLOW, S_YELLOW)
-    e += box("broker", "Mosquitto\n:1883", 592, 420, 120, 74, ORANGE, S_ORANGE)
+    e += box("broker", "Mosquitto\n:8883 TLS", 592, 420, 120, 74, ORANGE, S_ORANGE)
 
     e += box("ingest", "cloud-ingest\nCBOR validate + metrics", 785, 150, 260, 72, PURPLE, S_PURPLE)
     e += box("prom", "Prometheus\n:9091", 785, 280, 260, 72, GREEN, S_GREEN)
@@ -220,7 +220,7 @@ def demo_topology():
     e += box("note", "native_sim firmware\nneeds TAP/bridge for live MQTT\n(golden CBOR test covers bytes)",
              60, 670, 360, 90, YELLOW, S_YELLOW, size=16)
 
-    e += box("mosq", "Mosquitto\n:1883", 600, 150, 210, 72, ORANGE, S_ORANGE)
+    e += box("mosq", "Mosquitto\n:8883 TLS", 600, 150, 210, 72, ORANGE, S_ORANGE)
     e += box("cloud", "cloud-ingest\n:9090 /metrics /health", 600, 280, 230, 72, PURPLE, S_PURPLE)
     e += box("prom", "Prometheus\n:9091", 600, 410, 210, 72, GREEN, S_GREEN)
     e += box("graf", "Grafana\n:3000", 890, 410, 210, 72, PINK, S_PINK)

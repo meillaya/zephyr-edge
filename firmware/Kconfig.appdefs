@@ -69,12 +69,44 @@ config MQTT_BROKER_HOST
 
 config MQTT_BROKER_PORT
 	int "MQTT broker port"
+	default 8883 if MQTT_TLS
 	default 1883
 	range 1 65535
 	help
-	  TCP port of the MQTT broker. Default 1883 is the standard
-	  unencrypted MQTT port (local dev/CI runs without TLS; documented
-	  limitation).
+	  TCP port of the MQTT broker. The default is 8883 with MQTT_TLS and
+	  1883 for explicitly unencrypted builds.
+
+config MQTT_TLS
+	bool "MQTT over TLS"
+	default y
+	help
+	  Connect with TLS using the embedded development CA certificate. The
+	  broker certificate must chain to it and must match
+	  MQTT_TLS_SERVER_NAME. Disable only for an isolated, explicitly
+	  unencrypted test setup.
+
+config MQTT_TLS_SERVER_NAME
+	string "MQTT TLS server name (SNI/certificate verification)"
+	default "broker"
+	depends on MQTT_TLS
+	help
+	  Hostname presented in SNI and matched against the server certificate.
+	  The committed dev certificate includes DNS:broker, DNS:mosquitto,
+	  DNS:localhost, and the native_sim TAP addresses.
+
+config MQTT_USERNAME
+	string "MQTT username"
+	default "edge-device"
+	help
+	  Username sent in CONNECT. Change for any real deployment; the
+	  committed password file is development-only.
+
+config MQTT_PASSWORD
+	string "MQTT password"
+	default "change-me"
+	help
+	  Password sent in CONNECT. The committed credentials are for the local
+	  development stack only; use a secret for real deployments.
 
 config MQTT_TELEMETRY_TOPIC_FMT
 	string "Telemetry topic format (printf-style, one %s = device_id)"

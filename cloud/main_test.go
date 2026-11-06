@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"os"
 	"testing"
 
@@ -146,5 +147,44 @@ func TestHandleMessageOutOfRangeStillExported(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(msgTotal.WithLabelValues("native-sim-001")); got != beforeMsg+1 {
 		t.Errorf("out-of-range reading was not exported: %v -> %v", beforeMsg, got)
+	}
+}
+
+func TestMQTTTLSConfig(t *testing.T) {
+	t.Setenv("MQTT_TLS_CA", "../infra/tls/ca.crt")
+	t.Setenv("MQTT_TLS_SERVER_NAME", "")
+
+	cfg, err := mqttTLSConfig("tls://localhost:8883")
+	if err != nil {
+		t.Fatalf("mqttTLSConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("mqttTLSConfig returned nil for tls broker")
+	}
+	if cfg.RootCAs == nil {
+		t.Fatal("RootCAs is nil")
+	}
+	if cfg.ServerName != "localhost" {
+		t.Fatalf("ServerName = %q, want localhost", cfg.ServerName)
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("MinVersion = %x, want TLS1.2", cfg.MinVersion)
+	}
+}
+
+func TestMQTTTLSConfigPlaintextIsExplicit(t *testing.T) {
+	cfg, err := mqttTLSConfig("tcp://localhost:1883")
+	if err != nil {
+		t.Fatalf("mqttTLSConfig: %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("plaintext broker unexpectedly returned a TLS config")
+	}
+}
+
+func TestMQTTTLSConfigMissingCA(t *testing.T) {
+	t.Setenv("MQTT_TLS_CA", "/does/not/exist/ca.crt")
+	if _, err := mqttTLSConfig("tls://localhost:8883"); err == nil {
+		t.Fatal("expected an error for a missing CA")
 	}
 }

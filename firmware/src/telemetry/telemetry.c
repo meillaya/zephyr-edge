@@ -23,6 +23,15 @@
 
 #include "telemetry.h"
 
+#if defined(CONFIG_MQTT_TLS)
+#include <zephyr/net/tls_credentials.h>
+
+#include "telemetry_ca_cert.h"
+
+#define TELEMETRY_CA_TAG 1
+static sec_tag_t telemetry_sec_tags[] = { TELEMETRY_CA_TAG };
+#endif
+
 LOG_MODULE_REGISTER(TELEMETRY, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* MQTT client RX/TX buffers. Sized for one CBOR telemetry payload plus MQTT
@@ -207,6 +216,49 @@ int telemetry_init(void)
 	client_ctx.user_name = NULL;
 	client_ctx.password = NULL;
 	client_ctx.protocol_version = MQTT_VERSION_3_1_1;
+
+	if (CONFIG_MQTT_USERNAME[0] != '\0') {
+		static struct mqtt_utf8 user_name;
+
+		user_name.utf8 = (const uint8_t *)CONFIG_MQTT_USERNAME;
+		user_name.size = strlen(CONFIG_MQTT_USERNAME);
+		client_ctx.user_name = &user_name;
+	}
+	if (CONFIG_MQTT_PASSWORD[0] != '\0') {
+		static struct mqtt_utf8 password;
+
+		password.utf8 = (const uint8_t *)CONFIG_MQTT_PASSWORD;
+		password.size = strlen(CONFIG_MQTT_PASSWORD);
+		client_ctx.password = &password;
+	}
+
+#if defined(CONFIG_MQTT_TLS)
+	int tls_err = tls_credential_add(TELEMETRY_CA_TAG,
+					 TLS_CREDENTIAL_CA_CERTIFICATE,
+					 telemetry_ca_cert,
+					 TELEMETRY_CA_CERT_LEN);
+
+	if (tls_err < 0 && tls_err != -EEXIST) {
+		LOG_ERR("failed to register MQTT CA certificate: %d", tls_err);
+		return tls_err;
+	}
+	LOG_INF("MQTT TLS configured: ca=%u bytes tag=%d server=%s",
+		(unsigned int)TELEMETRY_CA_CERT_LEN, TELEMETRY_CA_TAG,
+		CONFIG_MQTT_TLS_SERVER_NAME);
+
+	client_ctx.transport.type = MQTT_TRANSPORT_SECURE;
+
+	struct mqtt_sec_config *tls = &client_ctx.transport.tls.config;
+
+	tls->peer_verify = TLS_PEER_VERIFY_REQUIRED;
+	tls->cipher_list = NULL;
+	tls->cipher_count = 0;
+	tls->sec_tag_list = telemetry_sec_tags;
+	tls->sec_tag_count = ARRAY_SIZE(telemetry_sec_tags);
+	tls->hostname = CONFIG_MQTT_TLS_SERVER_NAME;
+#else
+	client_ctx.transport.type = MQTT_TRANSPORT_NON_SECURE;
+#endif
 
 	client_ctx.rx_buf = rx_buffer;
 	client_ctx.rx_buf_size = sizeof(rx_buffer);
