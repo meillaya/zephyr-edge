@@ -27,6 +27,19 @@ result-*
 *.swp
 .DS_Store
 
+# Sandboxed Podman VM state + generated verification artifacts
+.sandbox/
+artifacts/
+power_report.md
+# native_sim flash simulator backing file + devenv-generated hook file
+/flash.bin
+/.pre-commit-config.yaml
+
 # Go build output (cloud/ + tests/ in later phases)
 bin/
 *.test
+
+# Python / browser render caches
+__pycache__/
+*.pyc
+docs/diagrams/.render-home/

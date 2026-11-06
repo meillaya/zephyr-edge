@@ -14,21 +14,26 @@ docker-compose stack for local development and CI:
 ```bash
 cd infra/
 docker compose up -d --build
+# or: podman compose -f docker-compose.yml up -d --build
 ```
 
 - **Grafana**: http://localhost:3000 (admin/admin)
 - **Prometheus**: http://localhost:9091
 - **MQTT**: localhost:1883
+- **cloud-ingest**: http://localhost:9090/metrics (and `/health` readiness)
+
+`cloud-ingest` runs as a non-root user and its health check returns 503 until
+the MQTT subscription is connected.
 
 ## Auto-provisioned dashboard
 
 The "Zephyr Edge Telemetry" dashboard is auto-provisioned via
 `grafana/provisioning/` and shows:
 
-- Temperature (°C) time series per device
-- Humidity (%RH) time series per device
-- Pressure (kPa) time series per device
-- Message counts, decode errors, out-of-range stats, sequence numbers
+- Temperature (°C), humidity (%RH), pressure (kPa) per device
+- Message counts, decode/unknown-schema/invalid counters, out-of-range stats
+- Latest sequence per device
+- Devices seen in the last 5 minutes, topic/device mismatches, last-seen age
 
 ## Health checks
 

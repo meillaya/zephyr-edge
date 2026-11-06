@@ -30,6 +30,10 @@ LOG_MODULE_REGISTER(POWER_SCHED, CONFIG_LOG_DEFAULT_LEVEL);
 static power_sched_active_fn active_cb;
 static void *active_user_data;
 
+static power_sched_service_fn service_cb;
+static void *service_user_data;
+static uint32_t service_interval_ms = CONFIG_POWER_SERVICE_INTERVAL_MS;
+
 static uint32_t active_ms = CONFIG_POWER_ACTIVE_MS;
 static uint32_t idle_ms = CONFIG_POWER_IDLE_MS;
 static uint32_t sleep_ms = CONFIG_POWER_SLEEP_MS;
@@ -73,14 +77,33 @@ static void set_awake(bool awake)
 	}
 }
 
-/* Sleep for `ms` milliseconds, returning the actual elapsed time. */
-static uint64_t sleep_measure(uint32_t ms)
+/*
+ * Sleep for `ms` milliseconds, returning the actual elapsed time. When
+ * `service` is true and a service callback is registered, the sleep is split
+ * into interval-sized chunks so MQTT input/keepalive and OTA frames are
+ * handled during the sleep window without waiting for the next full wake.
+ */
+static uint64_t sleep_measure(uint32_t ms, bool service)
 {
 	int64_t start = k_uptime_get();
+	uint32_t remaining = ms;
 
-	if (ms > 0) {
-		k_msleep(ms);
+	if (ms == 0) {
+		return 0;
 	}
+
+	if (!service || service_cb == NULL || service_interval_ms == 0) {
+		k_msleep(ms);
+	} else {
+		while (remaining > 0) {
+			uint32_t chunk = MIN(remaining, service_interval_ms);
+
+			k_msleep(chunk);
+			remaining -= chunk;
+			service_cb(service_user_data);
+		}
+	}
+
 	return (uint64_t)(k_uptime_get() - start);
 }
 
@@ -88,6 +111,9 @@ int power_sched_init(power_sched_active_fn cb, void *user_data)
 {
 	active_cb = cb;
 	active_user_data = user_data;
+	service_cb = NULL;
+	service_user_data = NULL;
+	service_interval_ms = CONFIG_POWER_SERVICE_INTERVAL_MS;
 	memset(&stats, 0, sizeof(stats));
 	atomic_set(&current_state, POWER_STATE_ACTIVE);
 	atomic_set(&stop_requested, 0);
@@ -107,6 +133,20 @@ void power_sched_set_durations(uint32_t a_ms, uint32_t i_ms, uint32_t s_ms)
 	LOG_DBG("durations set: active=%u idle=%u sleep=%u", a_ms, i_ms, s_ms);
 }
 
+int power_sched_set_service(power_sched_service_fn cb, void *user_data,
+			    uint32_t interval_ms)
+{
+	if (cb == NULL) {
+		return -EINVAL;
+	}
+
+	service_cb = cb;
+	service_user_data = user_data;
+	service_interval_ms = interval_ms != 0 ? interval_ms :
+						 CONFIG_POWER_SERVICE_INTERVAL_MS;
+	return 0;
+}
+
 static void run_one_cycle(void)
 {
 	/* ACTIVE: stay awake, do the active-window work (sample + log). */
@@ -115,16 +155,16 @@ static void run_one_cycle(void)
 	if (active_cb != NULL) {
 		active_cb(active_user_data);
 	}
-	stats.active_ms += sleep_measure(active_ms);
+	stats.active_ms += sleep_measure(active_ms, false);
 
 	/* IDLE: awake but quiescent (lock still held). */
 	atomic_set(&current_state, POWER_STATE_IDLE);
-	stats.idle_ms += sleep_measure(idle_ms);
+	stats.idle_ms += sleep_measure(idle_ms, false);
 
 	/* SLEEP: release the PM lock so the system may suspend-to-idle. */
 	atomic_set(&current_state, POWER_STATE_SLEEP);
 	set_awake(false);
-	stats.sleep_ms += sleep_measure(sleep_ms);
+	stats.sleep_ms += sleep_measure(sleep_ms, true);
 
 	/* Awake again for the next cycle. */
 	set_awake(true);

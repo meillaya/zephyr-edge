@@ -1,8 +1,7 @@
 # CMakeLists.txt — OTA update ztest suite (native_sim).
 #
-# Tests the OTA state machine and image validation logic. The full MQTT flow
-# requires a broker and is tested at the integration level; this suite verifies
-# the flash write path and MCUboot swap marking in isolation.
+# Drives the full start/data/finish/abort frame protocol and the rejection
+# paths against the native_sim flash simulator; no broker is required.
 
 cmake_minimum_required(VERSION 3.20.0)
 
@@ -12,5 +11,6 @@ project(test_ota)
 target_sources(app PRIVATE
   src/main.c
   ../../src/ota/ota_update.c
+  ../../src/fault_inject.c
 )
-target_include_directories(app PRIVATE ../../src/ota)
+target_include_directories(app PRIVATE ../../src/ota ../../src)

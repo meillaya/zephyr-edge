@@ -1,0 +1,20 @@
+/*
+ * native_sim.overlay — BME280 device instance on the native_sim I2C emulator.
+ *
+ * native_sim's board DTS already provides an I2C emulator controller at &i2c0
+ * (compatible "zephyr,i2c-emul-controller", enabled by CONFIG_I2C_EMUL). We
+ * attach the BME280 child node at I2C address 0x76; it is backed by the custom
+ * driver's emulator (drivers/sensor/bme280_custom/bme280_emul.c), which presents
+ * a full BME280 register file with calibration + raw ADC values that compensate
+ * to known physical values (see docs/DATA_MODEL.md and the bme280 ztest).
+ */
+
+&i2c0 {
+	status = "okay";
+
+	bme280@76 {
+		compatible = "vendor,bme280-custom";
+		reg = <0x76>;
+		status = "okay";
+	};
+};

@@ -1,9 +1,13 @@
 # Code Review — zephyr-edge-platform (Final Quality Gate)
 
+> **Historical review (2026-07-20).** Findings were addressed in the 2026-11
+> remediation; see [`../AUDIT.md`](../AUDIT.md) for the current status and
+> verification. File/line references below describe the pre-remediation tree.
+
 **Reviewer:** worker-1 (code-reviewer), team `final-quality-gate-fo-00f36ac3`
 **Date:** 2026-07-20
 **Scope:** `firmware/src/`, `firmware/drivers/sensor/bme280_custom/`, `cloud/`, `tests/fleet-sim/`, `infra/`, plus supporting `firmware/tests/`, `firmware/Kconfig*`, `justfile`, `.github/workflows/ci.yml`.
-**Companion artifact:** `docs/ARCHITECTURE_INVARIANT_AUDIT.md` (worker-2, architecture lane).
+**Companion artifact:** [`2026-07-20-architecture-invariant-audit.md`](2026-07-20-architecture-invariant-audit.md) (worker-2, architecture lane).
 
 ---
 

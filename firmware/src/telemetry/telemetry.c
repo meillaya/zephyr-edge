@@ -17,6 +17,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/mqtt.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/socket.h>
 
@@ -45,6 +46,12 @@ static struct sockaddr_storage broker;
 
 static bool connected;
 static uint32_t seq_counter;
+static uint16_t packet_id_counter;
+static telemetry_publish_fn publish_handler;
+static telemetry_connection_fn connection_handler;
+
+/* Inbound PUBLISH payload scratch buffer (OTA frames are the only subscriber). */
+static uint8_t publish_buffer[CONFIG_TELEMETRY_RX_PAYLOAD_MAX];
 
 /* ── Broker / client setup ─────────────────────────────────────────── */
 
@@ -60,28 +67,112 @@ static void broker_init(void)
 	}
 }
 
+/* ── Inbound PUBLISH handling ──────────────────────────────────────── */
+
+/*
+ * Read an inbound PUBLISH payload into publish_buffer. Zephyr's MQTT event
+ * carries only the payload length, so the bytes must be read from the socket
+ * here. Oversized payloads are drained (so the session stays in sync) and
+ * reported as -EMSGSIZE; I/O errors are reported as -EIO.
+ */
+static int read_publish_payload(struct mqtt_client *client,
+				const struct mqtt_publish_param *pub,
+				size_t *out_len)
+{
+	size_t len = pub->message.payload.len;
+	size_t to_read = MIN(len, sizeof(publish_buffer));
+	int err = mqtt_readall_publish_payload(client, publish_buffer, to_read);
+
+	if (err != 0) {
+		LOG_WRN("failed to read PUBLISH payload: %d", err);
+		return -EIO;
+	}
+
+	size_t remaining = len - to_read;
+	uint8_t discard[64];
+
+	while (remaining > 0) {
+		size_t chunk = MIN(remaining, sizeof(discard));
+
+		err = mqtt_readall_publish_payload(client, discard, chunk);
+		if (err != 0) {
+			LOG_WRN("failed to drain oversized PUBLISH: %d", err);
+			return -EIO;
+		}
+		remaining -= chunk;
+	}
+
+	if (len > sizeof(publish_buffer)) {
+		LOG_WRN("inbound PUBLISH too large: %zu > %zu", len,
+			sizeof(publish_buffer));
+		return -EMSGSIZE;
+	}
+
+	*out_len = len;
+	return 0;
+}
+
+static void handle_publish(struct mqtt_client *client,
+			   const struct mqtt_publish_param *pub)
+{
+	size_t len = 0;
+	int rc = read_publish_payload(client, pub, &len);
+
+	if (rc == 0) {
+		bool consumed = false;
+
+		if (publish_handler != NULL) {
+			consumed = publish_handler(&pub->message.topic,
+						   publish_buffer, len);
+		}
+		if (!consumed) {
+			LOG_DBG("unhandled PUBLISH (%zu bytes)", len);
+		}
+	}
+
+	/* Acknowledge QoS1 even for an oversized/unknown frame, so the broker
+	 * does not redeliver it forever. Skip the ack only if the socket read
+	 * itself failed (the session is likely already broken).
+	 */
+	if (rc != -EIO &&
+	    pub->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
+		struct mqtt_puback_param ack = {
+			.message_id = pub->message_id,
+		};
+
+		int ack_rc = mqtt_publish_qos1_ack(client, &ack);
+
+		if (ack_rc != 0) {
+			LOG_WRN("mqtt PUBACK send failed: %d", ack_rc);
+		}
+	}
+}
+
 /* ── MQTT event handler ────────────────────────────────────────────── */
 
 static void telemetry_evt_handler(struct mqtt_client *client,
 				  const struct mqtt_evt *evt)
 {
-	ARG_UNUSED(client);
-
 	switch (evt->type) {
 	case MQTT_EVT_CONNACK:
-		if (evt->result == 0) {
-			connected = true;
+		connected = (evt->result == 0);
+		if (connected) {
 			LOG_INF("mqtt connected to %s:%d", CONFIG_MQTT_BROKER_HOST,
 				CONFIG_MQTT_BROKER_PORT);
 		} else {
-			connected = false;
 			LOG_ERR("mqtt CONNACK refused: %d", evt->result);
+		}
+		if (connection_handler != NULL) {
+			connection_handler(connected);
 		}
 		break;
 
 	case MQTT_EVT_DISCONNECT:
 		connected = false;
 		LOG_WRN("mqtt disconnected: %d", evt->result);
+		if (connection_handler != NULL) {
+			connection_handler(false);
+		}
 		break;
 
 	case MQTT_EVT_PUBACK:
@@ -90,6 +181,10 @@ static void telemetry_evt_handler(struct mqtt_client *client,
 		} else {
 			LOG_WRN("mqtt PUBACK failed: %d", evt->result);
 		}
+		break;
+
+	case MQTT_EVT_PUBLISH:
+		handle_publish(client, &evt->param.publish);
 		break;
 
 	default:
@@ -129,6 +224,7 @@ int telemetry_init(void)
 
 	connected = false;
 	seq_counter = 0;
+	packet_id_counter = 0;
 
 	LOG_INF("telemetry init: client_id=\"%s\" topic=\"%s\"", CONFIG_DEVICE_ID,
 		topic_buffer);
@@ -145,6 +241,7 @@ int telemetry_connect(void)
 
 	if (err != 0) {
 		LOG_WRN("mqtt_connect failed: %d", err);
+		mqtt_abort(&client_ctx);
 		return err;
 	}
 
@@ -169,6 +266,21 @@ int telemetry_connect(void)
 bool telemetry_is_connected(void)
 {
 	return connected;
+}
+
+struct mqtt_client *telemetry_client(void)
+{
+	return &client_ctx;
+}
+
+void telemetry_set_publish_handler(telemetry_publish_fn handler)
+{
+	publish_handler = handler;
+}
+
+void telemetry_set_connection_handler(telemetry_connection_fn handler)
+{
+	connection_handler = handler;
 }
 
 uint32_t telemetry_next_seq(void)
@@ -221,12 +333,14 @@ int telemetry_publish(const struct telemetry_msg *msg)
 		return err;
 	}
 
-	/* QoS1 message id must be non-zero; derive it from the payload seq. */
-	uint16_t message_id = (uint16_t)(msg->seq & 0xFFFF);
-
-	if (message_id == 0) {
-		message_id = 1;
+	/* QoS1 packet ids are independent of the telemetry seq; the broker only
+	 * requires that an id is non-zero while a PUBACK is outstanding.
+	 */
+	packet_id_counter++;
+	if (packet_id_counter == 0) {
+		packet_id_counter = 1;
 	}
+	uint16_t message_id = packet_id_counter;
 
 	struct mqtt_publish_param param = {0};
 
@@ -268,5 +382,7 @@ void telemetry_process(void)
 	}
 
 	mqtt_input(&client_ctx);
-	mqtt_live(&client_ctx);
+	if (connected) {
+		mqtt_live(&client_ctx);
+	}
 }

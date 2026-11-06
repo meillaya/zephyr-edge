@@ -1,27 +1,25 @@
 /*
  * ota_update.h — MQTT-triggered OTA firmware update (MCUboot + flash simulator).
  *
- * Subscribes to the OTA command topic (devices/<device_id>/cmd by default,
- * configurable via CONFIG_OTA_CMD_TOPIC_FMT) and receives firmware image chunks
- * via MQTT PUBLISH messages. Chunks are written to the flash simulator using
- * the stream_flash API; once the full image is received, img_manager marks it
- * for boot swap (MCUboot swap-move upgrade path).
+ * Subscribes to the OTA command topic (cmd/<device_id>/ota by default,
+ * configurable via CONFIG_OTA_CMD_TOPIC_FMT) and receives firmware image
+ * frames via MQTT PUBLISH messages. Image bytes are written to the flash
+ * simulator / OTA slot with stream_flash; once the full image is received,
+ * img_manager marks it for boot swap (MCUboot swap-move upgrade path).
  *
- * Protocol (simplified for native_sim / CI):
- *   - Publisher sends a PUBLISH to devices/<device_id>/cmd with a JSON-like
- *     payload: {"cmd":"ota_start","size":<N>}
- *   - Subsequent PUBLISHes carry raw binary chunks (up to CONFIG_OTA_CHUNK_SIZE
- *     bytes each) on the same topic.
- *   - Final PUBLISH: {"cmd":"ota_finish"}
- *   - On ota_finish, the image is validated (size match) and marked for swap.
+ * Wire format (raw binary, one frame per MQTT PUBLISH; docs/OTA.md):
+ *   0x01 <uint32_be image_size>   start a session (exactly 5 bytes)
+ *   0x02 <chunk bytes>            image data (1..CONFIG_OTA_CHUNK_SIZE bytes)
+ *   0x03                          finish: size must match, then mark for swap
+ *   0x04                          abort: discard the session state
  *
- * Lifecycle:
- *   ota_init();          // once at startup (after telemetry_init)
- *   ota_subscribe();     // subscribe to the cmd topic (after MQTT connect)
- *   ota_process();       // drive MQTT input for OTA messages (call periodically)
+ * Lifecycle (driven by telemetry.c callbacks):
+ *   ota_init();                         // once at startup
+ *   telemetry_set_publish_handler(...); // dispatch frames to ota_handle_frame
+ *   telemetry_set_connection_handler(...); // ota_on_connected/disconnected
  *
- * The OTA module shares the MQTT client context with telemetry (passed at init).
- * If the broker is unreachable, OTA is simply inactive — no error propagation.
+ * The OTA module shares the MQTT client with telemetry; it never owns MQTT
+ * input. Inbound frames are read and acknowledged by telemetry.c.
  */
 #ifndef ZEPHYR_EDGE_PLATFORM_OTA_UPDATE_H_
 #define ZEPHYR_EDGE_PLATFORM_OTA_UPDATE_H_
@@ -40,33 +38,44 @@ enum ota_state {
 	OTA_STATE_ERROR,         /* OTA failed (size mismatch, flash err) */
 };
 
+/* Frame opcodes (first byte of every OTA PUBLISH payload). */
+enum ota_frame_opcode {
+	OTA_FRAME_START = 0x01,
+	OTA_FRAME_DATA = 0x02,
+	OTA_FRAME_FINISH = 0x03,
+	OTA_FRAME_ABORT = 0x04,
+};
+
+/* Start frame: opcode + 4-byte big-endian size. */
+#define OTA_START_FRAME_LEN 5
+#define OTA_CONTROL_FRAME_LEN 1
+
 /*
- * Initialize the OTA subsystem. Prepares the flash simulator and stream flash
- * context. Does not subscribe — call ota_subscribe() after MQTT connect.
+ * Initialize the OTA subsystem: build the command topic and reset state.
+ * Does not subscribe; the connection handler does that after CONNACK.
  * Returns 0 on success, negative errno on failure.
  */
 int ota_init(void);
 
+/* True if topic is exactly the configured OTA command topic. */
+bool ota_matches_topic(const struct mqtt_topic *topic);
+
 /*
- * Subscribe to the OTA command topic on the given MQTT client. Must be called
- * after the MQTT client is connected. Returns 0 on success.
+ * Handle one OTA frame from an MQTT PUBLISH payload. Returns true if the frame
+ * belongs to the OTA protocol (it is always consumed); invalid frames move the
+ * session to OTA_STATE_ERROR and are logged.
+ */
+bool ota_handle_frame(const uint8_t *frame, size_t len);
+
+/*
+ * Subscribe to the OTA command topic on the shared MQTT client. Called by
+ * ota_on_connected() after every CONNACK. Returns 0 on success.
  */
 int ota_subscribe(struct mqtt_client *client);
 
-/*
- * Handle an incoming MQTT PUBLISH event. Call this from the MQTT event handler
- * when the topic matches the OTA cmd topic. Returns true if the message was
- * consumed by OTA (caller should not process it further).
- */
-bool ota_handle_publish(struct mqtt_client *client,
-			const struct mqtt_publish_param *pub);
-
-/*
- * Drive OTA processing: call mqtt_input on the client to receive pending
- * messages. Call periodically from the application loop (alongside
- * telemetry_process).
- */
-void ota_process(struct mqtt_client *client);
+/* Connection callbacks, registered with telemetry_set_connection_handler(). */
+void ota_on_connected(struct mqtt_client *client);
+void ota_on_disconnected(void);
 
 /* Current OTA session state. */
 enum ota_state ota_get_state(void);
@@ -74,13 +83,16 @@ enum ota_state ota_get_state(void);
 /* Total bytes received in the current/last OTA session. */
 size_t ota_bytes_received(void);
 
+/* True once ota_subscribe() has queued the subscription for this connection. */
+bool ota_is_subscribed(void);
+
 /*
  * Mark the received image for boot swap (MCUboot). Called automatically on
- * ota_finish; exposed for testing.
+ * finish; exposed for testing.
  */
 int ota_mark_for_swap(void);
 
-/* Reset OTA state to idle (for testing / retry after error). */
+/* Reset OTA session state to idle (for testing / retry after error). */
 void ota_reset(void);
 
 #endif /* ZEPHYR_EDGE_PLATFORM_OTA_UPDATE_H_ */

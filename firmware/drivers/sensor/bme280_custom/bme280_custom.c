@@ -202,15 +202,24 @@ static int bme280_sample_fetch(const struct device *dev, enum sensor_channel cha
 	}
 
 	/* Wait for the conversion to complete (measuring bit clears). */
+	bool measurement_done = false;
+
 	for (int i = 0; i < BME280_MEAS_POLL_MAX; i++) {
 		rc = bme280_burst_read(&cfg->i2c, BME280_REG_STATUS, &status, 1);
 		if (rc < 0) {
 			return rc;
 		}
 		if ((status & BME280_STATUS_MEASURING) == 0) {
+			measurement_done = true;
 			break;
 		}
 		k_msleep(BME280_MEAS_POLL_DELAY_MS);
+	}
+
+	if (!measurement_done) {
+		LOG_WRN("measurement timed out after %d ms",
+			BME280_MEAS_POLL_MAX * BME280_MEAS_POLL_DELAY_MS);
+		return -ETIMEDOUT;
 	}
 
 	rc = bme280_burst_read(&cfg->i2c, BME280_REG_PRESS_MSB, raw, sizeof(raw));
@@ -229,8 +238,10 @@ static int bme280_sample_fetch(const struct device *dev, enum sensor_channel cha
 		1000.0;
 	data->hum_pct = bme280_compensate_humidity(data->adc_H, &data->calib, data->t_fine);
 
-	LOG_DBG("fetch: T=%.2f C P=%.3f kPa H=%.2f %%RH", (double)data->temp_c,
-		(double)data->press_kpa, (double)data->hum_pct);
+	/* Integer milli-units avoid requiring floating-point printf support. */
+	LOG_DBG("fetch: T=%d mC P=%d Pa H=%d m%%RH",
+		(int)(data->temp_c * 1000.0), (int)(data->press_kpa * 1000.0),
+		(int)(data->hum_pct * 1000.0));
 	return 0;
 }
 

@@ -34,6 +34,13 @@ static bool initialized;
 int sensor_log_init(void)
 {
 	if (initialized) {
+		/* Keep the "fresh init" contract for tests and supervisors: a
+		 * repeated init empties the log and clears diagnostics.
+		 */
+		k_mutex_lock(&sensor_log_mutex, K_FOREVER);
+		ring_buf_reset(&sensor_log_rb);
+		dropped_count = 0;
+		k_mutex_unlock(&sensor_log_mutex);
 		return 0;
 	}
 	k_mutex_init(&sensor_log_mutex);
@@ -50,6 +57,9 @@ int sensor_log_put(const struct sensor_reading *reading)
 {
 	if (reading == NULL) {
 		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EAGAIN;
 	}
 
 	k_mutex_lock(&sensor_log_mutex, K_FOREVER);
@@ -82,6 +92,9 @@ int sensor_log_get(struct sensor_reading *reading)
 {
 	if (reading == NULL) {
 		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EAGAIN;
 	}
 
 	k_mutex_lock(&sensor_log_mutex, K_FOREVER);

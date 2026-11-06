@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -7,21 +9,45 @@
   "links": [],
   "panels": [
     {
-      "title": "Temperature (°C)",
+      "title": "Temperature (\u00b0C)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null },
-              { "color": "green", "value": 15 },
-              { "color": "orange", "value": 35 },
-              { "color": "red", "value": 60 }
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 15
+              },
+              {
+                "color": "orange",
+                "value": 35
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
             ]
           }
         },
@@ -38,20 +64,41 @@
     {
       "title": "Humidity (%RH)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
           "min": 0,
           "max": 100,
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 90 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
             ]
           }
         },
@@ -68,18 +115,39 @@
     {
       "title": "Pressure (kPa)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "pressurekpa",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 90 },
-              { "color": "red", "value": 110 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 90
+              },
+              {
+                "color": "red",
+                "value": 110
+              }
             ]
           }
         },
@@ -96,10 +164,20 @@
     {
       "title": "Messages Received",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short" },
+        "defaults": {
+          "unit": "short"
+        },
         "overrides": []
       },
       "targets": [
@@ -113,16 +191,30 @@
     {
       "title": "Decode Errors",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
             ]
           }
         },
@@ -139,16 +231,30 @@
     {
       "title": "Out-of-Range Values",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
             ]
           }
         },
@@ -165,10 +271,20 @@
     {
       "title": "Latest Sequence",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short" },
+        "defaults": {
+          "unit": "short"
+        },
         "overrides": []
       },
       "targets": [
@@ -178,12 +294,105 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 8,
+      "title": "Devices Seen (5m)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "count(telemetry_last_seen_timestamp_seconds > (time() - 300))",
+          "legendFormat": "devices",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Topic Mismatches",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(telemetry_topic_mismatch_total)",
+          "legendFormat": "mismatches",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Last Seen Age",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "time() - telemetry_last_seen_timestamp_seconds",
+          "legendFormat": "{{device_id}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,
-  "tags": ["zephyr", "edge", "telemetry"],
-  "templating": { "list": [] },
-  "time": { "from": "now-15m", "to": "now" },
+  "tags": [
+    "zephyr",
+    "edge",
+    "telemetry"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "Zephyr Edge Telemetry",

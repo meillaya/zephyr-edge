@@ -38,6 +38,13 @@ struct power_stats {
 typedef void (*power_sched_active_fn)(void *user_data);
 
 /*
+ * Callback invoked periodically during the sleep window (e.g. to service the
+ * MQTT session). Runs while the PM suspend lock is released, so it must stay
+ * short. Optional.
+ */
+typedef void (*power_sched_service_fn)(void *user_data);
+
+/*
  * Initialize the scheduler. Registers the active-window callback (may be NULL).
  * Loads default window durations from Kconfig. Idempotent.
  */
@@ -46,6 +53,14 @@ int power_sched_init(power_sched_active_fn active_cb, void *user_data);
 /* Override window durations (ms). Pass 0 for any window to skip it. */
 void power_sched_set_durations(uint32_t active_ms, uint32_t idle_ms,
 			       uint32_t sleep_ms);
+
+/*
+ * Register a service callback invoked every interval_ms during sleep windows.
+ * Pass interval_ms = 0 to use CONFIG_POWER_SERVICE_INTERVAL_MS.
+ * Returns 0 on success, -EINVAL for a NULL callback.
+ */
+int power_sched_set_service(power_sched_service_fn cb, void *user_data,
+			    uint32_t interval_ms);
 
 /*
  * Run exactly n wake/sleep cycles synchronously (blocking). Updates stats and

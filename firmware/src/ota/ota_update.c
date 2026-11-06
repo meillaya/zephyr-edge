@@ -1,27 +1,28 @@
 /*
  * ota_update.c — MQTT-triggered OTA firmware update (MCUboot + flash simulator).
  *
- * Implements the OTA receive path described in ota_update.h. Firmware image
- * chunks arrive as MQTT PUBLISH payloads on the cmd topic; they are written to
- * the flash simulator via stream_flash, then marked for MCUboot swap-move on
- * completion.
+ * Implements the receive path described in ota_update.h. Image frames arrive
+ * from telemetry.c (which reads and acknowledges the MQTT PUBLISH payload),
+ * are written to the OTA slot with stream_flash, and are marked for MCUboot
+ * swap-move on completion.
  *
  * The implementation is intentionally simple and CI-friendly:
- *   - Single-threaded (driven from the application loop via ota_process).
+ *   - Single-threaded (driven from telemetry's publish callback).
  *   - No TLS / authentication (documented limitation, matches prj.conf).
  *   - Flash simulator on native_sim; real hardware uses the same code path
  *     with the actual flash driver.
  *
- * Note: On native_sim, CONFIG_BOOTLOADER_MCUBOOT is not enabled because it
- * requires HAS_FLASH_LOAD_OFFSET. The OTA module uses img_manager/flash_img
- * APIs for simulation; the boot_request_upgrade() call is conditionally
- * compiled only when CONFIG_BOOTLOADER_MCUBOOT is available.
+ * On native_sim, CONFIG_BOOTLOADER_MCUBOOT is not enabled because it requires
+ * HAS_FLASH_LOAD_OFFSET. The OTA module drives img_manager/flash_img directly
+ * and boot_request_upgrade() is compiled only when MCUboot is available.
  */
 
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
 
+#include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/mqtt.h>
@@ -32,37 +33,35 @@
 #include <zephyr/dfu/mcuboot.h>
 #endif
 
+#include "fault_inject.h"
 #include "ota_update.h"
 
 LOG_MODULE_REGISTER(OTA, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* Flash area for the OTA image slot (MCUboot slot1_partition). */
-#if DT_HAS_FIXED_PARTITION_LABEL(slot1_partition)
-#define OTA_FLASH_AREA_ID FIXED_PARTITION_ID(slot1_partition)
-#else
-/* Fallback for native_sim without explicit slot1_partition. */
-#define OTA_FLASH_AREA_ID 1
-#endif
-
-/* Stream flash write buffer. */
-#define OTA_WRITE_BUF_SIZE CONFIG_OTA_CHUNK_SIZE
-
-/* Command topic buffer. */
 #define OTA_TOPIC_BUF_SIZE 64
+#define OTA_SUB_MESSAGE_ID 0x07A1
 
-/* Simple command detection: look for these substrings in the payload. */
-#define OTA_CMD_START  "ota_start"
-#define OTA_CMD_FINISH "ota_finish"
+/* The telemetry RX scratch buffer must be large enough for one data frame. */
+BUILD_ASSERT(CONFIG_TELEMETRY_RX_PAYLOAD_MAX >= CONFIG_OTA_CHUNK_SIZE + 1,
+	     "CONFIG_TELEMETRY_RX_PAYLOAD_MAX must cover OTA_CHUNK_SIZE + 1");
+
+#if DT_HAS_FIXED_PARTITION_LABEL(slot1_partition)
+BUILD_ASSERT(CONFIG_OTA_MAX_IMAGE_SIZE <= FIXED_PARTITION_SIZE(slot1_partition),
+	     "CONFIG_OTA_MAX_IMAGE_SIZE exceeds the slot1 partition");
+#endif
 
 static enum ota_state state = OTA_STATE_IDLE;
 static size_t expected_size;
 static size_t bytes_received;
 static char topic_buf[OTA_TOPIC_BUF_SIZE];
 static bool subscribed;
-
-/* Flash image context (MCUboot dfu). */
+static bool ready;
 static struct flash_img_context flash_ctx;
-static bool flash_ctx_initialized;
+
+/* Per-frame scratch buffer; corrupting it exercises flash degradation without
+ * mutating the caller's const payload buffer.
+ */
+static uint8_t chunk_buf[CONFIG_OTA_CHUNK_SIZE];
 
 /* Subscription topic storage for mqtt_subscription_list. */
 static struct mqtt_topic sub_topic;
@@ -74,7 +73,7 @@ int ota_init(void)
 	expected_size = 0;
 	bytes_received = 0;
 	subscribed = false;
-	flash_ctx_initialized = false;
+	ready = false;
 
 	int n = snprintf(topic_buf, sizeof(topic_buf), CONFIG_OTA_CMD_TOPIC_FMT,
 			 CONFIG_DEVICE_ID);
@@ -83,15 +82,34 @@ int ota_init(void)
 		return -ENOMEM;
 	}
 
-	LOG_INF("OTA init: cmd topic=\"%s\" max_image=%d", topic_buf,
-		CONFIG_OTA_MAX_IMAGE_SIZE);
+	ready = true;
+	LOG_INF("OTA init: cmd topic=\"%s\" max_image=%d chunk=%d", topic_buf,
+		CONFIG_OTA_MAX_IMAGE_SIZE, CONFIG_OTA_CHUNK_SIZE);
 	return 0;
+}
+
+bool ota_matches_topic(const struct mqtt_topic *topic)
+{
+	if (!ready || topic == NULL || topic->topic.utf8 == NULL) {
+		return false;
+	}
+
+	size_t len = strlen(topic_buf);
+
+	return topic->topic.size == len &&
+	       memcmp(topic->topic.utf8, topic_buf, len) == 0;
 }
 
 int ota_subscribe(struct mqtt_client *client)
 {
+	if (!ready) {
+		return -EINVAL;
+	}
 	if (subscribed) {
 		return 0;
+	}
+	if (client == NULL) {
+		return -EINVAL;
 	}
 
 	sub_topic.topic.utf8 = (uint8_t *)topic_buf;
@@ -100,7 +118,7 @@ int ota_subscribe(struct mqtt_client *client)
 
 	sub_list.list = &sub_topic;
 	sub_list.list_count = 1;
-	sub_list.message_id = 0x07A1; /* non-zero subscription id */
+	sub_list.message_id = OTA_SUB_MESSAGE_ID;
 
 	int err = mqtt_subscribe(client, &sub_list);
 	if (err != 0) {
@@ -113,19 +131,29 @@ int ota_subscribe(struct mqtt_client *client)
 	return 0;
 }
 
-/* Parse the expected image size from an ota_start payload.
- * Looks for "size":<N> in the payload string.
- */
-static size_t parse_start_size(const uint8_t *data, size_t len)
+void ota_on_connected(struct mqtt_client *client)
 {
-	const char *key = "\"size\":";
-	const char *p = memmem(data, len, key, strlen(key));
-
-	if (p == NULL) {
-		return 0;
+	if (!ready) {
+		return;
 	}
-	p += strlen(key);
-	return (size_t)strtoul(p, NULL, 10);
+	if (state == OTA_STATE_RECEIVING) {
+		LOG_WRN("reconnect during OTA; abandoning partial image");
+		state = OTA_STATE_ERROR;
+	}
+
+	/* A new connection has no subscriptions, regardless of the previous
+	 * session state. */
+	subscribed = false;
+	(void)ota_subscribe(client);
+}
+
+void ota_on_disconnected(void)
+{
+	subscribed = false;
+	if (state == OTA_STATE_RECEIVING) {
+		LOG_WRN("disconnect during OTA; abandoning partial image");
+		state = OTA_STATE_ERROR;
+	}
 }
 
 static int ota_start_session(size_t size)
@@ -137,14 +165,21 @@ static int ota_start_session(size_t size)
 		return -EINVAL;
 	}
 
-	/* Initialize the flash image context for the slot1 partition. */
+#if DT_HAS_FIXED_PARTITION_LABEL(slot1_partition)
+	if (size > FIXED_PARTITION_SIZE(slot1_partition)) {
+		LOG_ERR("OTA rejected: size=%zu exceeds slot1 (%u)", size,
+			FIXED_PARTITION_SIZE(slot1_partition));
+		state = OTA_STATE_ERROR;
+		return -EINVAL;
+	}
+#endif
+
 	int err = flash_img_init(&flash_ctx);
 	if (err != 0) {
 		LOG_ERR("flash_img_init failed: %d", err);
 		state = OTA_STATE_ERROR;
 		return err;
 	}
-	flash_ctx_initialized = true;
 
 	expected_size = size;
 	bytes_received = 0;
@@ -158,6 +193,11 @@ static int ota_write_chunk(const uint8_t *data, size_t len)
 	if (state != OTA_STATE_RECEIVING) {
 		return -EAGAIN;
 	}
+	if (data == NULL || len == 0 || len > sizeof(chunk_buf)) {
+		LOG_ERR("OTA invalid chunk length: %zu", len);
+		state = OTA_STATE_ERROR;
+		return -EINVAL;
+	}
 
 	if (bytes_received + len > expected_size) {
 		LOG_ERR("OTA overflow: %zu + %zu > %zu", bytes_received, len,
@@ -166,13 +206,16 @@ static int ota_write_chunk(const uint8_t *data, size_t len)
 		return -ENOSPC;
 	}
 
-	/* Write chunk to flash via the MCUboot flash image context.
-	 * flush=false for intermediate chunks; the final chunk is flushed
-	 * in ota_finish_session().
+	for (size_t i = 0; i < len; i++) {
+		chunk_buf[i] = fault_inject_flash_corrupt_byte(data[i]);
+	}
+
+	/* flush=false for intermediate chunks; the final chunk is flushed in
+	 * ota_finish_session().
 	 */
 	bool flush = (bytes_received + len >= expected_size);
-	int err = flash_img_buffered_write(&flash_ctx, (uint8_t *)data, len,
-					   flush);
+	int err = flash_img_buffered_write(&flash_ctx, chunk_buf, len, flush);
+
 	if (err != 0) {
 		LOG_ERR("flash_img_buffered_write failed: %d", err);
 		state = OTA_STATE_ERROR;
@@ -199,14 +242,14 @@ static int ota_finish_session(void)
 	}
 
 	/* Flush any remaining buffered data. */
-	int err = flash_img_buffered_write(&flash_ctx, NULL, 0, true);
+	int err = flash_img_buffered_write(&flash_ctx, chunk_buf, 0, true);
+
 	if (err != 0) {
 		LOG_ERR("flash flush failed: %d", err);
 		state = OTA_STATE_ERROR;
 		return err;
 	}
 
-	/* Mark the image for MCUboot swap. */
 	err = ota_mark_for_swap();
 	if (err != 0) {
 		state = OTA_STATE_ERROR;
@@ -219,53 +262,58 @@ static int ota_finish_session(void)
 	return 0;
 }
 
-bool ota_handle_publish(struct mqtt_client *client,
-			const struct mqtt_publish_param *pub)
+bool ota_handle_frame(const uint8_t *frame, size_t len)
 {
-	ARG_UNUSED(client);
-
-	/* Check if this message is on our cmd topic. */
-	if (pub->message.topic.topic.size != strlen(topic_buf) ||
-	    memcmp(pub->message.topic.topic.utf8, topic_buf,
-		   pub->message.topic.topic.size) != 0) {
+	if (!ready || frame == NULL || len == 0) {
 		return false;
 	}
 
-	const uint8_t *payload = pub->message.payload.data;
-	size_t payload_len = pub->message.payload.len;
+	switch (frame[0]) {
+	case OTA_FRAME_START: {
+		if (len != OTA_START_FRAME_LEN) {
+			LOG_ERR("OTA malformed start frame (%zu bytes)", len);
+			state = OTA_STATE_ERROR;
+			return true;
+		}
+		uint32_t size = ((uint32_t)frame[1] << 24) |
+				((uint32_t)frame[2] << 16) |
+				((uint32_t)frame[3] << 8) |
+				(uint32_t)frame[4];
 
-	/* Detect command messages (JSON-like) vs raw binary chunks. */
-	if (memmem(payload, payload_len, OTA_CMD_START,
-		   strlen(OTA_CMD_START)) != NULL) {
-		size_t size = parse_start_size(payload, payload_len);
 		(void)ota_start_session(size);
 		return true;
 	}
 
-	if (memmem(payload, payload_len, OTA_CMD_FINISH,
-		   strlen(OTA_CMD_FINISH)) != NULL) {
+	case OTA_FRAME_DATA:
+		(void)ota_write_chunk(frame + 1, len - 1);
+		return true;
+
+	case OTA_FRAME_FINISH:
+		if (len != OTA_CONTROL_FRAME_LEN) {
+			LOG_ERR("OTA malformed finish frame (%zu bytes)", len);
+			state = OTA_STATE_ERROR;
+			return true;
+		}
 		(void)ota_finish_session();
 		return true;
-	}
 
-	/* Raw binary chunk. */
-	if (state == OTA_STATE_RECEIVING) {
-		(void)ota_write_chunk(payload, payload_len);
+	case OTA_FRAME_ABORT:
+		if (len != OTA_CONTROL_FRAME_LEN) {
+			LOG_ERR("OTA malformed abort frame (%zu bytes)", len);
+			state = OTA_STATE_ERROR;
+			return true;
+		}
+		ota_reset();
+		LOG_INF("OTA aborted");
+		return true;
+
+	default:
+		LOG_WRN("OTA unknown frame opcode 0x%02x", frame[0]);
+		if (state == OTA_STATE_RECEIVING) {
+			state = OTA_STATE_ERROR;
+		}
 		return true;
 	}
-
-	return false;
-}
-
-void ota_process(struct mqtt_client *client)
-{
-	if (!subscribed) {
-		return;
-	}
-	/* MQTT input is driven by telemetry_process() / the caller; nothing
-	 * extra needed here for the single-threaded model.
-	 */
-	ARG_UNUSED(client);
 }
 
 enum ota_state ota_get_state(void)
@@ -278,10 +326,16 @@ size_t ota_bytes_received(void)
 	return bytes_received;
 }
 
+bool ota_is_subscribed(void)
+{
+	return subscribed;
+}
+
 int ota_mark_for_swap(void)
 {
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)
 	int err = boot_request_upgrade(BOOT_UPGRADE_TEST);
+
 	if (err != 0) {
 		LOG_ERR("boot_request_upgrade failed: %d", err);
 		return err;
@@ -289,10 +343,8 @@ int ota_mark_for_swap(void)
 	LOG_INF("image marked for MCUboot swap (BOOT_UPGRADE_TEST)");
 	return 0;
 #else
-	/* On native_sim without CONFIG_BOOTLOADER_MCUBOOT, we simulate the
-	 * swap marking. The image is already written to the flash simulator;
-	 * in a real deployment, MCUboot would read the swap status and
-	 * perform the upgrade on reboot.
+	/* On native_sim without CONFIG_BOOTLOADER_MCUBOOT, the image is staged
+	 * in slot1; a real bootloader would validate and swap it on reboot.
 	 */
 	LOG_INF("OTA image staged (native_sim simulation; no MCUboot swap)");
 	return 0;
@@ -304,6 +356,5 @@ void ota_reset(void)
 	state = OTA_STATE_IDLE;
 	expected_size = 0;
 	bytes_received = 0;
-	flash_ctx_initialized = false;
 	LOG_DBG("OTA state reset");
 }

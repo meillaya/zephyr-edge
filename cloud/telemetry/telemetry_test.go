@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"os"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -262,5 +263,42 @@ func TestSeqWrap(t *testing.T) {
 	}
 	if res.Reading.Seq != 4294967295 {
 		t.Errorf("seq = %d, want 4294967295", res.Reading.Seq)
+	}
+}
+
+// TestDecodeFirmwareGolden decodes the byte-exact payload produced by the
+// firmware ztest (firmware/tests/telemetry/src/main.c). It exercises zcbor's
+// indefinite-length map output, which cbor.Marshal-based tests never cover.
+func TestDecodeFirmwareGolden(t *testing.T) {
+	payload, err := os.ReadFile("testdata/firmware-v1.cbor")
+	if err != nil {
+		t.Fatalf("read golden fixture: %v", err)
+	}
+	if len(payload) != 75 {
+		t.Fatalf("golden payload length = %d, want 75", len(payload))
+	}
+	if payload[0] != 0xBF {
+		t.Fatalf("golden payload starts with 0x%02x, want 0xbf (indefinite map)", payload[0])
+	}
+
+	res := Decode(payload)
+	if res.Validation != Valid {
+		t.Fatalf("expected Valid, got %v (err: %v)", res.Validation, res.Err)
+	}
+	r := res.Reading
+	if r.DeviceID != "native-sim-001" || r.Seq != 42 || r.TimestampMs != 210000 {
+		t.Errorf("unexpected header: device=%q seq=%d ts=%d", r.DeviceID, r.Seq, r.TimestampMs)
+	}
+	if r.TemperatureC != 25.08 || r.HumidityPct != 49.98 || r.PressureKpa != 101.325 {
+		t.Errorf("unexpected sensor values: %v %v %v", r.TemperatureC, r.HumidityPct, r.PressureKpa)
+	}
+	if r.PowerState == nil || *r.PowerState != 0 {
+		t.Errorf("power_state = %v, want 0", r.PowerState)
+	}
+	if r.PowerCounters[0] != 5000 || r.PowerCounters[1] != 120 || r.PowerCounters[2] != 54880 {
+		t.Errorf("power_counters = %v", r.PowerCounters)
+	}
+	if len(res.RangeViolations) != 0 {
+		t.Errorf("unexpected range violations: %v", res.RangeViolations)
 	}
 }

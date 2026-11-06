@@ -13,7 +13,9 @@
 #include "power_sched.h"
 
 static volatile uint32_t active_calls;
+static volatile uint32_t service_calls;
 static volatile enum power_state state_seen_in_cb;
+static volatile enum power_state service_state_seen;
 
 static void counting_active_cb(void *user_data)
 {
@@ -103,6 +105,37 @@ ZTEST(power_sched_tests, test_background_thread_runs_and_stops)
 	power_sched_get_stats(&st);
 	zassert_true(st.cycles >= 1, "background cycles=%u", st.cycles);
 	zassert_true(active_calls >= 1, "background active_calls=%u", active_calls);
+}
+
+static void counting_service_cb(void *user_data)
+{
+	ARG_UNUSED(user_data);
+	service_calls++;
+	service_state_seen = power_sched_state();
+}
+
+ZTEST(power_sched_tests, test_service_callback_during_sleep)
+{
+	service_calls = 0;
+	service_state_seen = POWER_STATE_ACTIVE;
+
+	zassert_ok(power_sched_init(counting_active_cb, NULL));
+	power_sched_set_durations(1, 0, 20);
+	zassert_ok(power_sched_set_service(counting_service_cb, NULL, 5));
+	zassert_ok(power_sched_run_cycles(1));
+
+	/* 20ms / 5ms interval -> at least 3 callbacks even with scheduler
+	 * slack. The callback must run while the state is SLEEP.
+	 */
+	zassert_true(service_calls >= 3, "service_calls=%u", service_calls);
+	zassert_equal(service_state_seen, POWER_STATE_SLEEP,
+		      "service state=%d", (int)service_state_seen);
+}
+
+ZTEST(power_sched_tests, test_service_requires_callback)
+{
+	zassert_ok(power_sched_init(counting_active_cb, NULL));
+	zassert_equal(power_sched_set_service(NULL, NULL, 5), -EINVAL);
 }
 
 ZTEST_SUITE(power_sched_tests, NULL, NULL, NULL, NULL, NULL);

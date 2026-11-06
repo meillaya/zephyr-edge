@@ -2,24 +2,24 @@
 
 Zephyr RTOS edge platform: BME280 sensor driver, MQTT/CBOR telemetry, MCUboot OTA, and Go cloud ingestion.
 
+![System architecture](docs/diagrams/architecture.png)
+
 ## Quick Start
 
 ```sh
 devenv shell      # reproducible toolchain (Zephyr, west, cmake, ninja)
-just build        # west build -b native_sim firmware
-just test         # run all ztest suites on native_sim
-just demo         # end-to-end: firmware + cloud + Grafana dashboard
+just build        # west build -b native_sim/native/64 firmware
+just test         # run all ztest suites
+just demo         # fleet simulator + cloud + Grafana pipeline
 ```
 
 ## Structure
 
-```
-firmware/    Zephyr app + custom BME280 driver module
-cloud/       Go MQTT/CBOR ingestion service
-infra/       docker-compose observability (Prometheus + Grafana)
-tests/       fleet simulator, fault injection, HIL harness
-bootloader/  MCUboot OTA image signing config
-```
+`firmware/` Zephyr app + driver · `cloud/` Go ingestion · `infra/` observability · `tests/` fleet sim, e2e, HIL · `docs/` architecture, data model, OTA.
+
+## Design Docs
+
+[Architecture](docs/ARCHITECTURE.md) · [Data model](docs/DATA_MODEL.md) · [OTA](docs/OTA.md) · [Demo](docs/DEMO.md) · [Audit](docs/AUDIT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## References
 
@@ -31,4 +31,4 @@ bootloader/  MCUboot OTA image signing config
 
 ## License
 
-MIT — see [LICENSE](LICENSE) if present; otherwise MIT applies.
+MIT — see [LICENSE](LICENSE).

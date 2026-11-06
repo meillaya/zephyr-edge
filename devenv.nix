@@ -12,11 +12,9 @@
 # It is intentionally NOT installed by default because it is ~1 GB and not
 # required for native_sim. To enable it, uncomment the `zephyr-sdk` line in
 # the Linux branch below, or run:  nix shell nixpkgs#zephyr-sdk
-{
-  pkgs,
-  lib,
-  config,
-  ...
+{ pkgs
+, lib
+, ...
 }:
 
 lib.mkMerge [
@@ -37,8 +35,12 @@ lib.mkMerge [
       gnused
       gnugrep
       coreutils
+      curl
+      go
       jq
       just # top-level build orchestrator (see ./justfile)
+      mosquitto # local e2e broker (E2E_MODE=local)
+      shellcheck
       nixfmt-rfc-style
     ];
 
@@ -53,10 +55,9 @@ lib.mkMerge [
   {
     languages.python = {
       enable = true;
-      package = pkgs.python3;
-      # Python libraries imported by Zephyr's build system / west.
-      # `west` is the Zephyr meta-tool used to fetch modules and drive builds.
-      packages = ps: with ps; [
+      # `west` is the Zephyr meta-tool used to fetch modules and drive builds;
+      # the other modules are imported by Zephyr's build system.
+      package = pkgs.python3.withPackages (ps: with ps; [
         west
         pyelftools
         pyyaml
@@ -67,7 +68,7 @@ lib.mkMerge [
         psutil
         pyserial
         setuptools
-      ];
+      ]);
     };
 
     packages = with pkgs; [
@@ -76,7 +77,7 @@ lib.mkMerge [
       dtc # devicetree compiler (zephyr,make / dtc)
       gperf # perfect-hash generator used by some Zephyr subsystems
       pkg-config
-      libusb # used by host tooling / flashing probes
+      libusb1 # used by host tooling / flashing probes
     ];
   }
 

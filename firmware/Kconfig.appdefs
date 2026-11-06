@@ -16,9 +16,9 @@ config SENSOR_LOG_BUF_SIZE
 	help
 	  Size in bytes of the ring buffer that stores timestamped BME280
 	  readings before telemetry publication. Each record is
-	  sizeof(struct sensor_reading) (20 bytes on 32-bit native_sim, 24 on
-	  64-bit), so the 4096-byte default holds ~170-204 records depending on
-	  target. Overflow overwrites the oldest record.
+	  sizeof(struct sensor_reading) (24 bytes on the default 64-bit
+	  native_sim target), so the 4096-byte default holds ~170 records.
+	  Overflow overwrites the oldest record.
 
 config POWER_ACTIVE_MS
 	int "Power scheduler active window (ms)"
@@ -37,11 +37,24 @@ config POWER_IDLE_MS
 
 config POWER_SLEEP_MS
 	int "Power scheduler sleep window (ms)"
-	default 55000
+	default 5000
 	range 0 3600000
 	help
 	  Duration of the suspend-to-idle sleep window each cycle. With the
-	  defaults the device is active 5s then sleeps 55s (10% duty cycle).
+	  defaults the device is active 5s then sleeps 5s (about 50% duty
+	  cycle). Longer sleep windows save power but reduce telemetry rate and
+	  command responsiveness; the MQTT session is still serviced every
+	  CONFIG_POWER_SERVICE_INTERVAL_MS during sleep.
+
+config POWER_SERVICE_INTERVAL_MS
+	int "Power scheduler service-callback interval (ms)"
+	default 100
+	range 10 5000
+	help
+	  During the sleep window the scheduler invokes the registered service
+	  callback (telemetry_process) at this interval, so MQTT keepalive,
+	  PUBACK, and OTA frames are handled without waiting for the next full
+	  wake cycle.
 
 config MQTT_BROKER_HOST
 	string "MQTT broker IPv4 address"
@@ -81,15 +94,27 @@ config MQTT_CONNECT_TIMEOUT_MS
 	  returning -ETIMEDOUT. Connection is non-fatal: the application keeps
 	  sampling/logging and retries on the next cycle.
 
+config TELEMETRY_RX_PAYLOAD_MAX
+	int "Maximum inbound PUBLISH payload read in one event (bytes)"
+	default 600
+	range 64 4096
+	help
+	  telemetry.c reads inbound PUBLISH payloads from the socket into a
+	  fixed buffer before dispatching them to the registered handler (OTA).
+	  Must be at least CONFIG_OTA_CHUNK_SIZE + 1 for OTA data frames; larger
+	  payloads are drained and discarded with a warning.
+
 # --- Phase 3: OTA ---
 
 config OTA_CMD_TOPIC_FMT
 	string "OTA command topic format (printf-style, one %s = device_id)"
-	default "devices/%s/cmd"
+	default "cmd/%s/ota"
 	help
 	  printf-style topic the OTA subscriber listens on for firmware update
-	  commands. The single %s is replaced with CONFIG_DEVICE_ID, yielding
-	  e.g. devices/native-sim-001/cmd.
+	  frames. The single %s is replaced with CONFIG_DEVICE_ID, yielding
+	  e.g. cmd/native-sim-001/ota (docs/DATA_MODEL.md §4). Frames are one
+	  byte of opcode plus an optional big-endian size or raw image chunk;
+	  see docs/OTA.md.
 
 config OTA_MAX_IMAGE_SIZE
 	int "Maximum OTA firmware image size (bytes)"
@@ -114,32 +139,33 @@ config FAULT_INJECT
 	default n
 	help
 	  Enable the fault injection framework. Individual fault modes are
-	  gated by their own Kconfig symbols below. When disabled, all
-	  fault_inject_*() calls compile to no-ops.
+	  gated by their own Kconfig symbols below. The main application keeps
+	  this off by default; the fault_inject ztest suite enables it and all
+	  modes. When disabled, all fault_inject_*() calls compile to no-ops.
 
 config FAULT_INJECT_SENSOR_FAIL
 	bool "Inject sensor read failures"
 	default n
 	depends on FAULT_INJECT
 	help
-	  When enabled, sensor_sample_fetch() calls in the application return
-	  -EIO to simulate a sensor hardware failure. Used by the fault
-	  injection ztest suite.
+	  When enabled, the application's sample path checks
+	  fault_inject_sensor_check() before sensor_sample_fetch() and skips
+	  the sample with -EIO, simulating a sensor hardware failure.
 
 config FAULT_INJECT_FLASH_CORRUPT
 	bool "Inject flash corruption"
 	default n
 	depends on FAULT_INJECT
 	help
-	  When enabled, flash writes during OTA are silently corrupted (bytes
-	  inverted) to simulate flash media degradation. Used by the fault
-	  injection ztest suite.
+	  When enabled, OTA image bytes written to flash are inverted to
+	  simulate flash media degradation (fault_inject_flash_corrupt_byte()
+	  is applied in ota_write_chunk()).
 
 config FAULT_INJECT_DROP_PACKETS
 	bool "Inject MQTT packet drops"
 	default n
 	depends on FAULT_INJECT
 	help
-	  When enabled, MQTT publish calls are silently dropped (return 0
-	  without sending) to simulate network packet loss. Used by the fault
-	  injection ztest suite.
+	  When enabled, the application's telemetry drain loop skips MQTT
+	  publishes (the reading is still consumed) to simulate network packet
+	  loss; the drop is logged and counted.

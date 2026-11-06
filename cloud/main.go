@@ -67,14 +67,29 @@ var (
 		Name: "telemetry_seq",
 		Help: "Latest sequence number per device.",
 	}, []string{"device_id"})
+
+	topicMismatchTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telemetry_topic_mismatch_total",
+		Help: "Total messages whose topic-derived device ID did not match the payload.",
+	})
+
+	lastSeenGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telemetry_last_seen_timestamp_seconds",
+		Help: "Unix timestamp of the last valid telemetry message per device.",
+	}, []string{"device_id"})
 )
 
 func init() {
 	prometheus.MustRegister(
 		msgTotal, decodeErrTotal, unknownSchemaTotal, invalidTotal,
 		outOfRangeTotal, temperatureGauge, humidityGauge, pressureGauge, seqGauge,
+		topicMismatchTotal, lastSeenGauge,
 	)
 }
+
+// topicFilter is the MQTT subscription filter; handleMessage uses it to derive
+// the device ID from the topic. main() sets it from MQTT_TOPIC.
+var topicFilter = "telemetry/+"
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -96,6 +111,12 @@ func main() {
 	httpAddr := envOr("HTTP_ADDR", ":9090")
 	clientID := envOr("CLIENT_ID", "cloud-ingest")
 
+	if err := validateTopicFilter(mqttTopic); err != nil {
+		slog.Error("invalid MQTT_TOPIC", "topic", mqttTopic, "error", err)
+		os.Exit(1)
+	}
+	topicFilter = mqttTopic
+
 	// ── MQTT subscriber ─────────────────────────────────────────────
 	opts := mqtt.NewClientOptions().
 		AddBroker(mqttBroker).
@@ -105,8 +126,13 @@ func main() {
 		SetConnectRetryInterval(5 * time.Second).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			slog.Info("mqtt connected, subscribing", "broker", mqttBroker, "topic", mqttTopic)
-			if tok := c.Subscribe(mqttTopic, 1, handleMessage); tok.WaitTimeout(10*time.Second) && tok.Error() != nil {
-				slog.Error("mqtt subscribe failed", "error", tok.Error())
+			tok := c.Subscribe(mqttTopic, 1, handleMessage)
+			if !tok.WaitTimeout(10 * time.Second) {
+				slog.Error("mqtt subscribe timed out", "topic", mqttTopic)
+				return
+			}
+			if err := tok.Error(); err != nil {
+				slog.Error("mqtt subscribe failed", "error", err)
 			}
 		}).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
@@ -114,19 +140,36 @@ func main() {
 		})
 
 	client := mqtt.NewClient(opts)
-	if tok := client.Connect(); tok.WaitTimeout(30*time.Second) && tok.Error() != nil {
-		slog.Error("mqtt connect failed", "error", tok.Error())
+	connectTok := client.Connect()
+	if !connectTok.WaitTimeout(30 * time.Second) {
+		slog.Error("mqtt connect timed out", "broker", mqttBroker)
+		os.Exit(1)
+	}
+	if err := connectTok.Error(); err != nil {
+		slog.Error("mqtt connect failed", "error", err)
 		os.Exit(1)
 	}
 
 	// ── HTTP server (/metrics + /health) ────────────────────────────
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+		connected := client.IsConnected()
+		status := http.StatusOK
+		label := "ok"
+		if !connected {
+			status = http.StatusServiceUnavailable
+			label = "degraded"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":         label,
+			"mqtt_connected": connected,
+		})
+	}
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/ready", healthHandler)
 
 	srv := &http.Server{Addr: httpAddr, Handler: mux}
 	go func() {
@@ -167,7 +210,20 @@ func handleMessage(_ mqtt.Client, msg mqtt.Message) {
 	}
 
 	r := res.Reading
+
+	// The topic is the authentication-adjacent identity: a publisher on
+	// telemetry/<id> may only claim that <id> in the payload.
+	topicID, ok := deviceIDFromTopic(topicFilter, msg.Topic())
+	if !ok || topicID != r.DeviceID {
+		topicMismatchTotal.Inc()
+		slog.Warn("topic/device mismatch",
+			"topic", msg.Topic(), "topic_device_id", topicID,
+			"payload_device_id", r.DeviceID)
+		return
+	}
+
 	msgTotal.WithLabelValues(r.DeviceID).Inc()
+	lastSeenGauge.WithLabelValues(r.DeviceID).Set(float64(time.Now().Unix()))
 	temperatureGauge.WithLabelValues(r.DeviceID).Set(r.TemperatureC)
 	humidityGauge.WithLabelValues(r.DeviceID).Set(r.HumidityPct)
 	pressureGauge.WithLabelValues(r.DeviceID).Set(r.PressureKpa)

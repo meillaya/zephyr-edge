@@ -173,4 +173,39 @@ ZTEST(sensor_log_tests, test_concurrent_producers)
 	zassert_equal(drained, count, "drained=%u count=%u", drained, count);
 }
 
+ZTEST(sensor_log_tests, test_records_survive_ring_wrap)
+{
+	struct sensor_reading out;
+	const uint32_t total = sensor_log_capacity() * 3 + 7;
+	uint32_t last = 0;
+	uint32_t drained = 0;
+
+	fresh_log();
+
+	for (uint32_t i = 0; i < total; i++) {
+		struct sensor_reading in = {
+			.timestamp_ms = (int64_t)i,
+			.temperature_mc = HUM_MARKER,
+			.humidity_mpct = PRESS_MARKER,
+			.pressure_pa = (int32_t)i,
+		};
+
+		zassert_ok(sensor_log_put(&in));
+	}
+
+	while (sensor_log_get(&out) == 0) {
+		zassert_equal(out.temperature_mc, HUM_MARKER, "torn header");
+		zassert_equal(out.humidity_mpct, PRESS_MARKER, "torn body");
+		if (drained > 0) {
+			zassert_true(out.timestamp_ms > last,
+				     "records reordered or torn at %u", drained);
+		}
+		last = (uint32_t)out.timestamp_ms;
+		drained++;
+	}
+
+	zassert_equal(drained, sensor_log_capacity(), "drained=%u capacity=%u",
+		      drained, sensor_log_capacity());
+}
+
 ZTEST_SUITE(sensor_log_tests, NULL, NULL, NULL, NULL, NULL);

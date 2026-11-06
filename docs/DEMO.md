@@ -1,142 +1,102 @@
 # End-to-End Demo
 
-This guide walks through the full end-to-end (e2e) demo of the Zephyr edge
-platform: a fleet of simulated edge devices publishing CBOR telemetry over MQTT
-to the cloud ingestion service, with live metrics in Prometheus and Grafana.
+This guide walks through the local pipeline: a fleet of simulated edge devices
+publishing CBOR telemetry over MQTT to the cloud ingestion service, with live
+metrics in Prometheus and Grafana.
+
+> The fleet simulator is used because the `native_sim` firmware needs a host
+> TAP/bridge for live MQTT. The firmware's actual wire bytes are locked by the
+> golden CBOR test (`cloud/telemetry/testdata/firmware-v1.cbor`) and exercised
+> end-to-end by `tests/e2e/run.sh` in local mode.
+
+![Demo topology](diagrams/demo-topology.png)
 
 ## Prerequisites
 
-| Tool           | Version  | Purpose                          |
-|----------------|----------|----------------------------------|
-| Docker         | ≥ 24     | Runs the observability stack     |
-| Docker Compose | ≥ 2.20   | Orchestrates multi-service stack |
-| Go             | ≥ 1.24   | Builds and runs the fleet sim    |
-| just           | ≥ 1.30   | Task runner (see `justfile`)     |
-| curl, jq       | any      | Health-check smoke tests         |
+| Tool | Purpose |
+|------|---------|
+| Docker or Podman with Compose | Runs Mosquitto, cloud-ingest, Prometheus, Grafana |
+| Go ≥ 1.24 | Builds/runs the fleet simulator and cloud service |
+| just | Task runner |
+| curl, jq | Health checks and metric assertions |
 
-All tools are available inside the devenv shell (`devenv shell`) except Docker,
-which must be installed on the host.
+All host tools are available inside `devenv shell` except the container runtime.
 
 ## Quick start
 
 ```bash
-# From the repository root (zephyr-edge-platform/):
-just demo            # 10 simulated devices (default)
-just demo devices=50 # 50 simulated devices
+# From the repository root:
+just demo                 # 10 simulated devices (default)
+just demo devices=50      # 50 simulated devices
+COMPOSE="podman compose" just demo   # Podman users
 ```
 
 The command:
 
-1. **Starts the infra stack** — Mosquitto (MQTT broker), cloud-ingest (Go
-   telemetry service), Prometheus, and Grafana via `docker compose`.
-2. **Waits for health checks** — blocks until cloud-ingest reports healthy.
-3. **Launches the fleet simulator** — `tests/fleet-sim/main.go` publishes
-   synthetic CBOR telemetry (matching [`DATA_MODEL.md`](DATA_MODEL.md)) to the
-   MQTT broker for N concurrent devices.
-4. **Waits for telemetry** — polls Prometheus until `telemetry_messages_total`
-   shows data from at least one device.
-5. **Prints dashboard URLs** — Grafana, Prometheus, cloud-ingest metrics.
-6. **Runs until Ctrl-C** — then tears down the fleet sim and the Docker stack.
+1. Starts the compose stack (Mosquitto → cloud-ingest → Prometheus → Grafana).
+2. Waits for cloud-ingest `/health` (which now requires MQTT readiness).
+3. Launches the fleet simulator, publishing CBOR on `telemetry/fleet-sim-<N>`.
+4. Polls Prometheus until `telemetry_messages_total` shows devices.
+5. Prints dashboard URLs; Ctrl-C stops the simulator and tears down the stack.
 
-## Architecture
+`just demo` exits non-zero if the pipeline never becomes healthy or no
+telemetry is observed within 60s.
 
+## Automated pipeline test
+
+```bash
+just e2e                  # Docker mode
+E2E_MODE=local just e2e   # Mosquitto + cloud binary, no Docker (sandbox/VM)
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Fleet Simulator (Go)                                           │
-│  tests/fleet-sim/main.go -n <N>                                 │
-│                                                                 │
-│  ┌──────────┐  ┌──────────┐       ┌──────────┐                 │
-│  │ device-1 │  │ device-2 │  ...  │ device-N │                 │
-│  └────┬─────┘  └────┬─────┘       └────┬─────┘                 │
-│       │              │                  │                       │
-│       └──────────────┼──────────────────┘                       │
-│                      │ MQTT PUBLISH (QoS 1)                     │
-│                      │ topic: telemetry/fleet-sim-<N>           │
-│                      │ payload: CBOR map (DATA_MODEL.md §1)     │
-└──────────────────────┼──────────────────────────────────────────┘
-                       ▼
-              ┌─────────────────┐
-              │   Mosquitto     │  :1883
-              │   MQTT Broker   │
-              └────────┬────────┘
-                       │ subscribe: telemetry/+
-                       ▼
-              ┌─────────────────┐
-              │  cloud-ingest   │  :9090
-              │  (Go service)   │──→ /metrics (Prometheus format)
-              │                 │──→ /health
-              └────────┬────────┘
-                       │ scrape :9090/metrics
-                       ▼
-              ┌─────────────────┐
-              │   Prometheus    │  :9091
-              └────────┬────────┘
-                       │ query
-                       ▼
-              ┌─────────────────┐
-              │    Grafana      │  :3000
-              │  (dashboards)   │
-              └─────────────────┘
-```
+
+The test publishes fleet telemetry, asserts cloud metrics, and (in local mode)
+publishes the firmware's golden CBOR payload to prove the actual wire bytes are
+accepted by the real cloud decoder.
 
 ## Dashboard URLs
 
-| Service        | URL                          | Credentials     |
-|----------------|------------------------------|-----------------|
-| Grafana        | http://localhost:3000        | admin / admin   |
-| Prometheus     | http://localhost:9091        | —               |
-| Cloud ingest   | http://localhost:9090/metrics| —               |
-| MQTT broker    | localhost:1883               | anonymous (dev) |
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9091 | — |
+| Cloud ingest | http://localhost:9090/metrics | — |
+| MQTT broker | localhost:1883 | anonymous (dev) |
 
 ## Grafana dashboard
 
-The **"Zephyr Edge Telemetry"** dashboard is auto-provisioned
-(`infra/grafana/provisioning/`) and shows:
-
-- Temperature (°C), humidity (%RH), pressure (kPa) time series per device
-- Message counts (`telemetry_messages_total`)
-- Decode errors, unknown-schema rejections, out-of-range flags
-- Per-device sequence numbers (gap detection)
+Auto-provisioned from `infra/grafana/provisioning/`; shows temperature,
+humidity, pressure, message counts, decode/schema/out-of-range stats, latest
+sequence, topic mismatches, and devices seen in the last 5 minutes.
 
 ## Useful Prometheus queries
 
 ```promql
-# Total messages per device
 telemetry_messages_total
-
-# Temperature per device
 telemetry_temperature_celsius
-
-# Rate of decode errors
 rate(telemetry_decode_errors_total[1m])
-
-# Out-of-range sensor values
 telemetry_out_of_range_total
-
-# Devices currently reporting
 count(telemetry_seq) by (device_id)
+time() - telemetry_last_seen_timestamp_seconds
+telemetry_topic_mismatch_total
 ```
 
 ## Manual teardown
 
-If the demo is interrupted without a clean Ctrl-C:
-
 ```bash
-cd infra/
-docker compose down -v
+cd infra && docker compose down -v
+# or: podman compose -f infra/docker-compose.yml down -v
 ```
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `cloud-ingest` not healthy | MQTT broker not ready | Check `docker compose logs mosquitto` |
+| cloud-ingest unhealthy | Broker not ready or MQTT not connected | `docker compose logs mosquitto cloud-ingest` |
 | No telemetry in Prometheus | Fleet sim not publishing | Check fleet-sim stdout for MQTT errors |
-| Grafana shows "No data" | Prometheus scrape delay | Wait 15–30 s; check Prometheus targets page |
-| Port conflict (1883/9090/9091/3000) | Another service on the port | `lsof -i :<port>` and stop the conflicting process |
+| Grafana "No data" | Prometheus scrape delay | Wait 15–30s; check Prometheus targets |
+| Port conflict (1883/9090/9091/3000) | Another service | `ss -ltnp` and stop the conflict |
 
 ## Security note
 
-MQTT runs **without TLS** in this demo (documented limitation). Do not expose
-these ports outside localhost. See [`DATA_MODEL.md`](DATA_MODEL.md) §4 for the
-topic conventions.
+MQTT runs without TLS or authentication in this demo; bind it to localhost only.
+See [`DATA_MODEL.md`](DATA_MODEL.md) §4 and [`OTA.md`](OTA.md).

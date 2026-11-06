@@ -1,13 +1,15 @@
 # ci.yml — continuous integration for the zephyr-edge-platform monorepo.
 #
 # Jobs:
-#   firmware-build   – build the Zephyr firmware for native_sim
-#   firmware-test    – run all ztest suites on native_sim
-#   cloud-test       – run Go unit tests for the cloud ingestion service
-#   docker-compose-test – build + health-check the local observability stack
+#   firmware-build   – build the Zephyr firmware for native_sim/native/64
+#   firmware-test    – run all ztest suites on native_sim/native/64
+#   go-test          – race tests + vet for cloud, fleet-sim, and ota-sim
+#   contract         – topic/frame/golden/README contract guard
+#   compose-e2e      – real broker → cloud → Prometheus/Grafana pipeline test
+#   lint             – shellcheck for the harness scripts
 #
-# The firmware jobs share a west-workspace cache so `west update` (which
-# clones the full Zephyr tree + modules) runs only once per commit.
+# The firmware jobs share a west-workspace cache so `west update` (which clones
+# the full Zephyr tree + modules) runs only once per commit.
 
 name: CI
 
@@ -22,7 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BOARD: native_sim
+  BOARD: native_sim/native/64
+  ZEPHYR_TOOLCHAIN_VARIANT: host
 
 jobs:
   # ── Firmware build ──────────────────────────────────────────────────
@@ -36,9 +39,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build gperf device-tree-compiler pkg-config libusb-1.0-0-dev
-          pipx install west
-          pip install pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
+            cmake ninja-build gperf device-tree-compiler pkg-config \
+            python3-venv python3-pip libusb-1.0-0-dev
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install west pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
 
       - name: Cache west workspace
         id: cache-west
@@ -53,13 +59,15 @@ jobs:
           key: west-${{ hashFiles('firmware/west.yml') }}-${{ runner.os }}
 
       - name: West init + update
-        if: steps.cache-west.outputs.cache-hit != 'true'
         run: |
-          west init -l firmware
-          west update
+          . .venv/bin/activate
+          if [ ! -d .west ]; then west init -l firmware; fi
+          if [ ! -d zephyr ]; then west update; fi
 
       - name: Build firmware
-        run: west build -b ${{ env.BOARD }} -p auto firmware
+        run: |
+          . .venv/bin/activate
+          west build -b "$BOARD" -p auto firmware
 
       - name: Upload firmware binary
         uses: actions/upload-artifact@v4
@@ -80,9 +88,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build gperf device-tree-compiler pkg-config libusb-1.0-0-dev
-          pipx install west
-          pip install pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
+            cmake ninja-build gperf device-tree-compiler pkg-config \
+            python3-venv python3-pip libusb-1.0-0-dev
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install west pyelftools pyyaml anytree intelhex packaging progress psutil pyserial setuptools
 
       - name: Cache west workspace
         id: cache-west
@@ -97,27 +108,28 @@ jobs:
           key: west-${{ hashFiles('firmware/west.yml') }}-${{ runner.os }}
 
       - name: West init + update
-        if: steps.cache-west.outputs.cache-hit != 'true'
         run: |
-          west init -l firmware
-          west update
+          . .venv/bin/activate
+          if [ ! -d .west ]; then west init -l firmware; fi
+          if [ ! -d zephyr ]; then west update; fi
 
       - name: Run ztest suites
         run: |
+          . .venv/bin/activate
           set -euo pipefail
           suites=(bme280 sensor_log power_sched telemetry ota fault_inject)
           for suite in "${suites[@]}"; do
             echo "::group::ztest: ${suite}"
-            west build -b ${{ env.BOARD }} -p auto -d "build/test-${suite}" "firmware/tests/${suite}"
+            west build -b "$BOARD" -p auto -d "build/test-${suite}" "firmware/tests/${suite}"
             west build -d "build/test-${suite}" -t run
             echo "::endgroup::"
           done
           echo ">> all ztest suites passed"
 
-  # ── Cloud service tests ────────────────────────────────────────────
-  cloud-test:
+  # ── Go tests ────────────────────────────────────────────────────────
+  go-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -125,73 +137,66 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-          cache-dependency-path: cloud/go.sum
+          cache-dependency-path: |
+            cloud/go.sum
+            tests/fleet-sim/go.sum
+            tests/ota-sim/go.sum
 
-      - name: Run Go tests
+      - name: Cloud tests + vet
         working-directory: cloud
-        run: go test -v -race -count=1 ./...
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...
 
-      - name: Vet
-        working-directory: cloud
-        run: go vet ./...
+      - name: Fleet-sim tests
+        working-directory: tests/fleet-sim
+        run: go test -race -count=1 ./...
+        # Race tests exercise the real paho client against the in-process broker.
 
-  # ── Docker Compose integration test ────────────────────────────────
-  docker-compose-test:
+      - name: OTA simulator tests
+        working-directory: tests/ota-sim
+        run: go test -count=1 ./...
+
+  # ── Wire/topic/README contract ─────────────────────────────────────
+  contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: cloud-test
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract guard
+        run: ./tests/scripts/check-contract.sh
+
+  # ── End-to-end compose pipeline ────────────────────────────────────
+  compose-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and start the stack
-        working-directory: infra
-        run: docker compose up -d --build
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: |
+            cloud/go.sum
+            tests/fleet-sim/go.sum
 
-      - name: Wait for all services to be healthy
-        working-directory: infra
+      - name: Run docker e2e
+        env:
+          E2E_MODE: docker
+        run: ./tests/e2e/run.sh
+
+  # ── Script lint ────────────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: shellcheck
         run: |
-          set -euo pipefail
-          services=(mosquitto cloud-ingest prometheus grafana)
-          timeout=120
-          elapsed=0
-          for svc in "${services[@]}"; do
-            echo ">> waiting for ${svc} to be healthy..."
-            while true; do
-              health=$(docker compose ps --format json "$svc" 2>/dev/null | jq -r '.Health // .State' | head -1)
-              if [ "$health" = "healthy" ]; then
-                echo "   ${svc}: healthy"
-                break
-              fi
-              sleep 3
-              elapsed=$((elapsed + 3))
-              if [ "$elapsed" -ge "$timeout" ]; then
-                echo "::error::${svc} did not become healthy within ${timeout}s"
-                docker compose logs "$svc"
-                exit 1
-              fi
-            done
-          done
-          echo ">> all services healthy"
-
-      - name: Smoke-test cloud-ingest /health
-        run: |
-          curl -sf http://localhost:9090/health | jq -e '.status == "ok"'
-
-      - name: Smoke-test Prometheus /-/healthy
-        run: |
-          curl -sf http://localhost:9091/-/healthy
-
-      - name: Smoke-test Grafana /api/health
-        run: |
-          curl -sf http://localhost:3000/api/health | jq -e '.database == "ok"'
-
-      - name: Verify MQTT broker is accepting connections
-        run: |
-          # Publish a test message and confirm the broker accepts it.
-          docker compose -f infra/docker-compose.yml exec -T mosquitto \
-            mosquitto_pub -t "telemetry/ci-test" -m "test" -q 1
-
-      - name: Tear down
-        if: always()
-        working-directory: infra
-        run: docker compose down -v
+          shellcheck --severity=warning \
+            tests/scripts/*.sh \
+            tests/e2e/*.sh \
+            tests/hil/*.sh

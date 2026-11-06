@@ -5,10 +5,12 @@ instead of `native_sim`. The firmware-level ztest suites live under
 [`../../firmware/tests/`](../../firmware/tests/); these scripts drive them on
 hardware.
 
-> **Status:** optional / best-effort. The main Phase 1–4 verification path is
-> `native_sim` (`just build` / `just test`). HIL adds confidence that the same
-> code runs on the production Cortex-M4 target with real PM, BLE-capable radio,
-> and real flash. It requires physical hardware and a cross-toolchain.
+> **Status:** experimental / best-effort. The supported verification path is
+> `native_sim/native/64` (`just build` / `just test`). HIL adds confidence that
+> the same code runs on a Cortex-M4 target with real PM and flash, but it has
+> not been validated on a bench in this repository's current state. A real
+> nRF52840 app image also needs an MCUboot partition layout + `--sysbuild`; the
+> default app config simulates OTA staging and will not swap on reboot.
 
 ## Prerequisites
 
@@ -63,8 +65,11 @@ hardware.
 | `--baud`          | `115200`               | serial baud rate                          |
 | `--timeout`       | `60`                   | per-suite capture window (seconds)        |
 
-Suites run: `bme280 sensor_log power_sched telemetry ota fault_inject`
-(the same set as `just test`).
+Suites run: `sensor_log power_sched telemetry fault_inject`.
+`bme280` is excluded because it asserts the `native_sim` I2C emulator's exact
+fixture values; `ota` is excluded because it needs a `slot1_partition` board
+layout. A real BME280 bench test and an MCUboot sysbuild layout are roadmap
+items, not hidden assumptions.
 
 ## How verdicts work
 
@@ -76,7 +81,8 @@ console for `--timeout` seconds and classifies the run:
 - **FAIL** — log contains `PROJECT EXECUTION FAILED` (or a `TESTSUITE … failed`
   / `FAIL -` line). The script exits non-zero and prints the log tail.
 - **UNKNOWN** — no recognizable marker (test didn't finish in time, wrong baud,
-  or no output). Treated as not-pass; inspect the captured log under `/tmp/`.
+  or no output). Treated as **failure** (the script exits non-zero); inspect the
+  captured log under `/tmp/`.
 
 Without `--tty`, suites are built and flashed but reported as `FLASHED`
 (verify by watching the console yourself, e.g.
@@ -96,6 +102,10 @@ Without `--tty`, suites are built and flashed but reported as `FLASHED`
   series with the DK; these scripts verify functional behavior, not
   milliwatts (consistent with the native_sim power benchmark's documented
   limitation).
+- **App image / OTA:** `flash.sh`'s default `-a firmware` app build is not the
+  supported path yet; it needs an MCUboot partition layout and a sysbuild
+  (`SB_CONFIG_BOOTLOADER_MCUBOOT=y`). Until that exists, use the ztest suites
+  above (they do not boot a production image).
 - **No CI:** HIL needs physical hardware, so it is not wired into
   `.github/workflows/ci.yml` (which runs the `native_sim` + cloud + compose
   jobs). Run it locally on a bench DK.

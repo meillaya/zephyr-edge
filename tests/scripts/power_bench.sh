@@ -97,21 +97,19 @@ timeout "${DURATION}s" "$BINARY" > "$LOG_FILE" 2>&1 || true
 POWER_LINE=$(grep -E 'power:.*cycles=.*active=.*idle=.*sleep=' "$LOG_FILE" | tail -1 || true)
 
 if [[ -z "$POWER_LINE" ]]; then
-    echo "WARNING: No power-state log lines found in output." >&2
-    echo "The firmware may not have run long enough or logging is disabled." >&2
-    # Generate a report with zero values
-    ACTIVE_MS=0
-    IDLE_MS=0
-    SLEEP_MS=0
-    CYCLES=0
-else
-    echo "Found power line: $POWER_LINE"
-    # Extract values using sed/grep
-    CYCLES=$(echo "$POWER_LINE" | grep -oP 'cycles=\K[0-9]+' || echo "0")
-    ACTIVE_MS=$(echo "$POWER_LINE" | grep -oP 'active=\K[0-9]+' || echo "0")
-    IDLE_MS=$(echo "$POWER_LINE" | grep -oP 'idle=\K[0-9]+' || echo "0")
-    SLEEP_MS=$(echo "$POWER_LINE" | grep -oP 'sleep=\K[0-9]+' || echo "0")
+    echo "ERROR: no power-state log lines found in the captured output." >&2
+    echo "Build with firmware/boards/power_bench.conf (short cycles) or run longer:" >&2
+    echo "  just power-bench duration=10" >&2
+    echo "Last output:" >&2
+    tail -20 "$LOG_FILE" >&2
+    exit 1
 fi
+
+echo "Found power line: $POWER_LINE"
+CYCLES=$(echo "$POWER_LINE" | grep -oP 'cycles=\K[0-9]+' || echo "0")
+ACTIVE_MS=$(echo "$POWER_LINE" | grep -oP 'active=\K[0-9]+' || echo "0")
+IDLE_MS=$(echo "$POWER_LINE" | grep -oP 'idle=\K[0-9]+' || echo "0")
+SLEEP_MS=$(echo "$POWER_LINE" | grep -oP 'sleep=\K[0-9]+' || echo "0")
 
 # --- Calculate percentages ---
 TOTAL_MS=$((ACTIVE_MS + IDLE_MS + SLEEP_MS))
@@ -150,7 +148,8 @@ cat > "$OUTPUT" << REPORT
 - Actual power consumption (mW) requires hardware measurement (documented limitation).
 - The power scheduler cycles ACTIVE → IDLE → SLEEP with configurable durations
   (CONFIG_POWER_ACTIVE_MS, CONFIG_POWER_IDLE_MS, CONFIG_POWER_SLEEP_MS).
-- Default duty cycle: 5s active + 100ms idle + 55s sleep ≈ 8.3% active.
+- just power-bench builds firmware/boards/power_bench.conf (500ms/100ms/500ms)
+  so a short run produces samples; the production defaults are 5s/100ms/5s.
 
 ## Raw Log (last 20 lines)
 

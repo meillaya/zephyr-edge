@@ -11,10 +11,10 @@
  * own Kconfig symbols.
  *
  * Usage:
- *   fault_inject_init();                    // once at startup
- *   fault_inject_set(FAULT_MODE_SENSOR, true);  // enable sensor failures
+ *   fault_inject_init();                          // once at startup
+ *   fault_inject_set(FAULT_MODE_SENSOR_FAIL, true);  // enable sensor failures
  *   ... run tests ...
- *   fault_inject_set(FAULT_MODE_SENSOR, false); // disable
+ *   fault_inject_set(FAULT_MODE_SENSOR_FAIL, false); // disable
  *
  * The ztest suite enables each mode, exercises the affected path, and asserts
  * the expected failure behavior.

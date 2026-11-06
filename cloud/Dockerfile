@@ -7,7 +7,10 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /cloud-ingest .
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S -g 10001 app \
+    && adduser -S -u 10001 -G app app
 COPY --from=builder /cloud-ingest /usr/local/bin/cloud-ingest
+USER app
 EXPOSE 9090
 ENTRYPOINT ["cloud-ingest"]

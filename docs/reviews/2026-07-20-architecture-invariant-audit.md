@@ -1,5 +1,9 @@
 # Architecture Invariant Audit — zephyr-edge-platform
 
+> **Historical audit (2026-07-20).** Several verdicts predate the OTA/fault
+> integration fixes. See [`../AUDIT.md`](../AUDIT.md) and
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the current architecture.
+
 **Audit type:** Final quality gate — architecture invariant verification
 **Auditor:** worker-2 (code-reviewer / architecture audit lane)
 **Date:** 2026-07-20

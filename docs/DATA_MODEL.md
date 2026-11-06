@@ -61,10 +61,15 @@ instead of strings to minimize payload size on constrained links.
 2. If key `0` (schema_version) is missing or `!= 1`, increment
    `telemetry_unknown_schema_total`, drop.
 3. Required keys `0,1,2,3,4,5,6` MUST be present; otherwise increment
-   `telemetry_invalid_total`, drop.
+   `telemetry_invalid_total`, drop. `device_id` (key 1) MUST be a non-empty
+   UTF-8 string that is safe as one MQTT topic level.
 4. Range-check: `-40 ≤ temperature_c ≤ 85`, `0 ≤ humidity_pct ≤ 100`,
    `30 ≤ pressure_kpa ≤ 115`. Out-of-range values are flagged
    (`telemetry_out_of_range_total`) but still exported.
+5. The topic MUST be `telemetry/<device_id>` and its `<device_id>` MUST equal
+   key 1. Mismatches are dropped and counted in
+   `telemetry_topic_mismatch_total`; this prevents one device from publishing
+   under another device's identity.
 
 ---
 
@@ -83,10 +88,10 @@ struct sensor_reading {
 };
 ```
 
-- Size: `sizeof(struct sensor_reading)` — 20 bytes on 32-bit native_sim
-  (int64 + 3×int32, 4-byte aligned under the i386 ABI) and 24 bytes on 64-bit
-  targets (8-byte int64 alignment). The code always uses `sizeof`, so record
-  framing is correct on any target.
+- Size: `sizeof(struct sensor_reading)` — 24 bytes on the default 64-bit
+  `native_sim/native/64` target (8-byte `int64_t` alignment), 20 bytes on a
+  32-bit target. The code always uses `sizeof`, so record framing is correct
+  on any target.
 - Ordering: FIFO. Overflow policy: **overwrite oldest** (configurable via
   `CONFIG_SENSOR_LOG_BUF_SIZE`, default 4096 bytes ≈ 170–204 records
   depending on target word size).
@@ -114,13 +119,16 @@ struct sensor_reading {
 
 ---
 
-## 4. MQTT Topic Conventions (preview, Phase 2)
+## 4. MQTT Topic Conventions
 
 | Topic                     | Direction     | Payload |
 |---------------------------|---------------|---------|
 | `telemetry/<device_id>`   | device → cloud| CBOR map (§1) |
-| `cmd/<device_id>/ota`     | cloud → device| CBOR map (Phase 2, OTA) |
-| `status/<device_id>`      | device → cloud| CBOR map (Phase 2, LWT/online) |
+| `cmd/<device_id>/ota`     | cloud → device| OTA binary frames ([`OTA.md`](OTA.md)) |
+| `status/<device_id>`      | device → cloud| reserved for LWT/online status (future) |
 
-Local dev/CI runs MQTT **without TLS** (documented limitation; see plan
-§Accepted Assumptions).
+The cloud subscriber's `MQTT_TOPIC` must contain exactly one `+` level; the
+default is `telemetry/+`. The topic-derived device ID is compared with key 1.
+
+Local dev/CI runs MQTT **without TLS or authentication** (documented
+limitation; use only on localhost/trusted networks).

@@ -8,10 +8,14 @@
  *
  * Lifecycle (driven from the application main loop):
  *   telemetry_init();            // once at startup
- *   telemetry_connect();         // connect to the broker (retries, non-fatal)
+ *   telemetry_connect();         // connect to the broker (non-fatal)
  *   ... each cycle ...
  *   telemetry_publish_reading(); // encode + publish one reading
- *   telemetry_process();         // drive keepalive + acks (mqtt_input/live)
+ *   telemetry_process();         // drive keepalive + acks + inbound PUBLISH
+ *
+ * Inbound PUBLISH payloads are read from the socket (Zephyr's MQTT event only
+ * carries the length), dispatched to the registered publish handler (the OTA
+ * receiver), and acknowledged for QoS1.
  *
  * The publisher degrades gracefully: if the network or broker is unreachable
  * (e.g. native_sim without host TAP/bridge setup), connect/publish return an
@@ -21,11 +25,26 @@
 #ifndef ZEPHYR_EDGE_PLATFORM_TELEMETRY_H_
 #define ZEPHYR_EDGE_PLATFORM_TELEMETRY_H_
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+#include <zephyr/net/mqtt.h>
 
 #include "power_sched.h"
 #include "sensor_log.h"
 #include "telemetry_cbor.h"
+
+/*
+ * Inbound-payload handler. The payload buffer is owned by telemetry.c and is
+ * only valid for the duration of the call. Return true if the message was
+ * consumed (e.g. an OTA frame); telemetry.c acknowledges QoS1 either way.
+ */
+typedef bool (*telemetry_publish_fn)(const struct mqtt_topic *topic,
+				     const uint8_t *payload, size_t len);
+
+/* Connection-state handler, called on CONNACK and DISCONNECT. */
+typedef void (*telemetry_connection_fn)(bool connected);
 
 /*
  * Initialize the MQTT client (buffers, broker address, client id, topic).
@@ -42,6 +61,15 @@ int telemetry_connect(void);
 
 /* True once a CONNACK has been received and the session is live. */
 bool telemetry_is_connected(void);
+
+/* Shared MQTT client, for modules that subscribe (OTA) or publish status. */
+struct mqtt_client *telemetry_client(void);
+
+/* Register the inbound-payload handler (may be NULL). */
+void telemetry_set_publish_handler(telemetry_publish_fn handler);
+
+/* Register the connection-state handler (may be NULL). */
+void telemetry_set_connection_handler(telemetry_connection_fn handler);
 
 /*
  * Return the next monotonic per-device sequence number (telemetry map key 2).
@@ -77,8 +105,9 @@ int telemetry_publish_reading(const struct sensor_reading *reading,
 			      uint32_t power_state);
 
 /*
- * Drive the MQTT state machine: process incoming packets (CONNACK/PUBACK) and
- * send keepalive PINGs when due. Call periodically from the application loop.
+ * Drive the MQTT state machine: process incoming packets (CONNACK/PUBACK/
+ * PUBLISH) and send keepalive PINGs when due. Call periodically from the
+ * application loop and from the power scheduler's sleep service callback.
  */
 void telemetry_process(void);
 
