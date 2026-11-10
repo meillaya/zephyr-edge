@@ -19,7 +19,7 @@ just demo         # fleet simulator + cloud + Grafana pipeline
 
 ## Design Docs
 
-[Architecture](docs/ARCHITECTURE.md) · [Data model](docs/DATA_MODEL.md) · [OTA](docs/OTA.md) · [Demo](docs/DEMO.md) · [Audit](docs/AUDIT.md) · [Roadmap](docs/ROADMAP.md)
+[Architecture](docs/ARCHITECTURE.md) · [Data model](docs/DATA_MODEL.md) · [OTA](docs/OTA.md) · [Demo](docs/DEMO.md) · [Audit](docs/AUDIT.md) · [Roadmap](docs/ROADMAP.md) · [Procurement](docs/PROCUREMENT.md)
 
 ## References
 

@@ -1,0 +1,28 @@
+tier,category,item,exact_part,qty,unit_price,currency,seller,product_url,closes_gap,notes,evidence
+0,board,nRF52840 DK,NRF52840-DK (PCA10056),1,79.38,CAD,Digi-Key Canada,https://www.digikey.ca/en/products/detail/nordic-semiconductor-asa/NRF52840-DK/8593726,G1/G4,pinned Zephyr board nrf52840dk/nrf52840; onboard J-Link OB + CDC serial; P22 current-measure header,snapshot 2025-10-13
+0,cable,USB-A to micro-USB data cable (x2),generic data cable,2,12.00,CAD,Amazon.ca or local shop,,G1,DK has two micro-USB ports; charge-only cables do not enumerate,estimate
+1,sensor,BME280 breakout (recommended),Pimoroni PIM472,1,20.95,CAD,PiShop.ca,https://www.pishop.ca/product/bme280-breakout-temperature-pressure-humidity-sensor/,G2,factory I2C 0x76 = matches repo overlay; headers included; 3.3V/5V,verified 2026-11-10
+1,sensor,BME280 breakout (alternative),Adafruit 2652,1,23.95,CAD,PiShop.ca,https://www.pishop.ca/product/adafruit-bme280-i2c-or-spi-temperature-humidity-pressure-sensor/,G2,factory 0x77; solder ADDR jumper (SDO-GND) for 0x76,verified 2026-11-10
+1,sensor,Reference temp/RH sensor,Sensirion SHT45 (Adafruit 5665),1,12.50,USD,Adafruit,https://www.adafruit.com/product/5665,G2,±0.1C/±1.0%RH ISO-17025 ref; I2C 0x44 shares bus with BME280,verified 2026-11-10
+1,sensor,Budget reference alternative,Sensirion SHT40/SHT41 (4885/5776),1,5.95,USD,Adafruit,https://www.adafruit.com/product/4885,G2,cheaper temp/RH reference; lower accuracy,verified 2026-11-10
+1,wire,Jumper wires + headers,M-F dupont jumpers + 1x5 header,1,10.00,CAD,Sayal or PiShop,,G2,DK Arduino headers are sockets; M-F jumper into DK + female onto breakout header,estimate
+1,network,W5500 Ethernet shield (verified path),Seeed W5500 Ethernet Shield 103030021,1,35.00,USD,Seeed Studio,https://www.seeedstudio.com/W5500-Ethernet-Shield.html,G5,Zephyr v4.1 seeed_w5500 shield; INT D2; 3.3V/5V tolerant I/O,verified 2026-11-10
+1,network,W5500 shield (domestic alternative),Arduino Ethernet Shield 2 (W5500) SKU 1718,1,41.95,CAD,PiShop.ca,https://www.pishop.ca/product/arduino-ethernet-shield2/,G5,W5500-based; verify INT routing/level shifting for DK before buying,verified 2026-11-10
+1,network,Ethernet patch cable,Cat-5e/6 1-2 m,1,8.00,CAD,local or Amazon.ca,,G5,connects shield to LAN switch/router,estimate
+2,instrument,Nordic Power Profiler Kit II,NRF-PPK2,1,136.50,CAD,Digi-Key Canada,https://www.digikey.ca/en/products/detail/nordic-semiconductor-asa/NRF-PPK2/13557476,G3,200nA-1A 100kS/s AMP+SMU; micro-USB cable NOT included; nRF Connect Power Profiler,snapshot 2025-08-08
+2,instrument,PPK2 alternative listing,Nordic PPK2 (Adafruit 5048),1,99.95,USD,Adafruit,https://www.adafruit.com/product/5048,G3,in stock 2026-11-10; same unit,verified 2026-11-10
+2,cable,Micro-USB data cable for PPK2,generic data cable,1,5.00,CAD,Amazon.ca or local,,G3,PPK2 box explicitly excludes USB cable,estimate
+2,power,CR2032 coin cell,CR2032,2,1.50,CAD,local,,G3,lowest-noise DK supply for current measurement,estimate
+3,host,Raspberry Pi 5 4GB,Raspberry Pi 5 4GB,1,156.85,CAD,PiShop.ca,https://www.pishop.ca/product/raspberry-pi-5-4gb/,G6/G7,compose stack + self-hosted HIL runner; 4GB is enough,verified 2026-11-10
+3,host,Raspberry Pi 5 8GB (optional),Raspberry Pi 5 8GB,1,249.50,CAD,PiShop.ca,,G6/G7,only if also used as desktop,verified 2026-11-10
+3,power,Official 27W USB-C PSU,Pi 5 27W PSU,1,16.95,CAD,PiShop.ca,,G6/G7,avoid no-name PSUs,verified 2026-11-10
+3,case,Official Pi 5 case,Pi 5 case,1,14.45,CAD,PiShop.ca,,G6/G7,,verified 2026-11-10
+3,storage,32GB A1/A2 microSD,SanDisk Ultra 32GB,1,27.95,CAD,PiShop.ca,,G6/G7,or USB 3 SSD later,verified 2026-11-10
+3,cooling,Active cooler or case fan,Pi 5 Active Cooler,1,13.50,USD,Adafruit,https://www.adafruit.com/product/5815,G6/G7,24/7 operation,verified 2026-11-10
+3,ci,USB relay / switchable hub (optional),uhubctl-compatible,1,30.00,CAD,Amazon.ca,,G7,power-cycle DK in CI,estimate
+3,cloud,VPS for remote deploy (optional),Hetzner shared / Fly.io,,9.00,CAD/month,Hetzner or Fly.io,https://www.hetzner.com/cloud/,G6,account-only; domain ~CAD 15/yr; Let's Encrypt free,verified pricing page
+opt,spare,Second nRF52840 DK,NRF52840-DK,1,79.38,CAD,Digi-Key Canada,,G8,multi-device fleet/OTA tests,snapshot 2025-10-13
+opt,spare,nRF52840 Dongle,NRF52840-DONGLE (PCA10059),1,15.34,CAD,Digi-Key Canada,,G8,cheap second node/Thread RCP; no onboard debugger,snapshot 2025-08-08
+opt,probe,SEGGER J-Link EDU Mini,J-Link EDU Mini 8.08.91,1,76.00,USD,SEGGER,https://shop-us.segger.com/product/j-link-edu-mini-8-08-91/,optional,external probe for custom boards; EDU non-commercial licence,verified 2026-11-10
+opt,tool,Logic analyzer (optional),8-ch 24MHz clone + sigrok,1,40.00,CAD,Amazon.ca/AliExpress,,optional,I2C debug beyond bus scan,estimate
+opt,tool,Multimeter (optional),any,1,25.00,CAD,Sayal/Amazon.ca,,optional,continuity/power checks,estimate

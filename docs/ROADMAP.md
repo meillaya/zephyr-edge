@@ -24,6 +24,9 @@ cross-build is in CI. Physical hardware validation is the remaining step.
 
 ## Next: hardware validation
 
+> Exact bill of materials, Canadian sourcing, landed costs, and wiring/compatibility
+> notes: see [PROCUREMENT.md](PROCUREMENT.md).
+
 1. Flash the already-cross-built nRF52840 DK image (`just build-hil` output)
    and run the HIL checklist; verify MCUboot swap-move and signature rejection
    with a deliberately invalid image. Add an IP transport (Ethernet/Wi-Fi
